@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PW · Admin</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<div class="config-banner">Mockup — numbers are fabricated.</div>
+
+<header class="topbar">
+  <button class="icon-btn" data-drawer-open aria-expanded="false" aria-label="Open menu">☰</button>
+  <div class="brand">PW<span>·</span>admin</div>
+  <div class="user-chip">kacapower</div>
+</header>
+
+<div class="drawer-backdrop"></div>
+<nav class="drawer" aria-label="Menu">
+  <div class="drawer-head">
+    <div class="avatar">K</div>
+    <div><b>kacapower</b><small>Administrator</small></div>
+  </div>
+  <button class="drawer-link">Home</button>
+  <button class="drawer-link">Library</button>
+  <button class="drawer-link active">Admin</button>
+  <button class="drawer-link danger">Log out</button>
+</nav>
+
+<main class="page">
+
+  <div class="stat-grid">
+    <div class="stat"><b>1,284</b><small>Doubts</small></div>
+    <div class="stat"><b>962</b><small>Solved</small></div>
+    <div class="stat"><b>318</b><small>Users</small></div>
+    <div class="stat"><b>4.7 GB</b><small>Library</small></div>
+  </div>
+
+  <div class="section-title">Moderation queue</div>
+  <div class="card"><div class="body">
+    <div class="title">3 messages flagged by the safety filter</div>
+    <div class="meta"><span class="badge unsolved">Needs review</span><span>oldest 14m ago</span></div>
+    <div class="actions">
+      <button class="btn small" data-modal="rev">Review</button>
+      <button class="btn small ghost" data-toast="Queue cleared">Clear all</button>
+    </div>
+  </div></div>
+
+  <div class="section-title">
+    Users
+    <button class="btn small ghost" data-toast="Exported">Export CSV</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>User</th><th>Doubts</th><th>Answers</th><th>Files</th><th>Joined</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>kacapower</td><td>42</td><td>118</td><td>19</td><td>2026-02-11</td><td>Admin</td><td><button class="btn small ghost">Edit</button></td></tr>
+        <tr><td>rhea.k</td><td>17</td><td>9</td><td>3</td><td>2026-05-03</td><td>Active</td><td><button class="btn small ghost">Edit</button></td></tr>
+        <tr><td>devansh</td><td>8</td><td>31</td><td>0</td><td>2026-06-22</td><td>Active</td><td><button class="btn small ghost">Edit</button></td></tr>
+        <tr><td>simran_p</td><td>25</td><td>60</td><td>7</td><td>2026-04-08</td><td>Active</td><td><button class="btn small ghost">Edit</button></td></tr>
+        <tr><td>anon_442</td><td>1</td><td>0</td><td>0</td><td>2026-07-30</td><td>Muted</td><td><button class="btn small ghost">Edit</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="progress-label">Scroll the table sideways — it no longer drags the page with it.</div>
+
+  <div class="section-title">Storage</div>
+  <div class="card"><div class="body">
+    <div class="title">Hugging Face dataset</div>
+    <div class="meta">kacapower/Directory · public</div>
+    <div class="progress"><div class="bar" style="width:47%"></div></div>
+    <div class="progress-label">4.7 GB of a soft 10 GB target · 47%</div>
+  </div></div>
+
+  <div class="section-title">Danger zone</div>
+  <div class="card"><div class="body">
+    <div class="title">Purge orphaned uploads</div>
+    <div class="meta">Files in the dataset with no matching row. Cannot be undone.</div>
+    <div class="actions"><button class="btn danger" data-toast="Nothing purged — mockup" data-toast-err>Purge 12 files</button></div>
+  </div></div>
+
+  <div style="height:16px"></div>
+</main>
+
+<div class="modal" id="rev">
+  <div class="modal-box">
+    <div class="modal-head"><b>Flagged message</b><button class="icon-btn" data-modal-close aria-label="Close">✕</button></div>
+    <div class="msg" style="max-width:100%;margin-top:10px">
+      <div class="who">anon_442</div>
+      <div class="bubble">[content withheld in the mockup]</div>
+      <div class="when">14m ago</div>
+    </div>
+    <label for="rn">Moderator note</label>
+    <textarea id="rn" rows="3" placeholder="Why you're allowing or removing this"></textarea>
+    <div class="actions" style="margin-top:16px">
+      <button class="btn" data-modal-close data-toast="Allowed">Allow</button>
+      <button class="btn danger" data-modal-close data-toast="Removed and user muted" data-toast-err>Remove</button>
+      <button class="btn ghost" data-modal-close>Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast"></div>
+
+<nav class="bottom-nav">
+  <a href="feed.html"><span>◰</span>Home</a>
+  <a href="library.html"><span>▤</span>Library</a>
+  <a href="community.html"><span>◈</span>Community</a>
+  <a class="active" href="admin.html"><span>⚙</span>Admin</a>
+</nav>
+
+<script src="mock.js"></script>
+</body>
+</html>

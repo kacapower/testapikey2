@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PW · Component Gallery</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<div class="config-banner">Mockup — every class in style.css, rendered. Not a real page.</div>
+
+<header class="topbar">
+  <button class="icon-btn" data-drawer-open aria-expanded="false" aria-label="Open menu">☰</button>
+  <div class="brand">PW<span>·</span>gallery</div>
+  <div class="user-chip">kacapower</div>
+</header>
+
+<div class="drawer-backdrop"></div>
+<nav class="drawer" aria-label="Menu">
+  <div class="drawer-head">
+    <div class="avatar">K</div>
+    <div><b>kacapower</b><small>Class 12 · PCM</small></div>
+  </div>
+  <button class="drawer-link active">Home</button>
+  <button class="drawer-link">Library</button>
+  <button class="drawer-link">Community</button>
+  <button class="drawer-link">Settings</button>
+  <button class="drawer-link danger" data-drawer-close>Close menu</button>
+</nav>
+
+<main class="page">
+
+  <div class="section-title">Buttons</div>
+  <div class="card"><div class="body">
+    <div class="actions">
+      <button class="btn" data-toast="Primary tapped">Primary</button>
+      <button class="btn ghost" data-toast="Ghost tapped">Ghost</button>
+      <button class="btn danger" data-toast="Deleted" data-toast-err>Danger</button>
+      <button class="btn small">Small</button>
+      <button class="btn" disabled>Disabled</button>
+      <button class="btn loading"><span class="spinner"></span> Loading</button>
+    </div>
+    <div style="margin-top:10px"><button class="btn block">Block button</button></div>
+    <div class="meta">Tab through these — v3 added focus rings that v2 never had.</div>
+  </div></div>
+
+  <div class="section-title">Chips <small>single-select</small></div>
+  <div class="chips">
+    <button class="chip active">All</button>
+    <button class="chip">Physics</button>
+    <button class="chip">Chemistry</button>
+    <button class="chip">Maths</button>
+    <button class="chip">Biology</button>
+    <button class="chip">Doubts</button>
+    <button class="chip">Solved</button>
+  </div>
+
+  <div class="section-title">Badges</div>
+  <div class="card"><div class="body">
+    <div class="meta">
+      <span class="badge solved">Solved</span>
+      <span class="badge unsolved">Unsolved</span>
+      <span>· badges sit inside .card .meta like this</span>
+    </div>
+  </div></div>
+
+  <div class="section-title">Hero</div>
+  <div class="hero">
+    <h2>Welcome back</h2>
+    <div class="empty">You have no pending doubts. The corner glow here is v3 — layered on the v2 gradient, no extra markup.</div>
+  </div>
+
+  <div class="section-title">
+    Cards
+    <button class="btn small ghost" data-reload="cardlist">Reload</button>
+  </div>
+  <div id="cardlist" data-cards>
+    <div class="card" id="card-a">
+      <img class="thumb" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 90'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23241245'/%3E%3Cstop offset='1' stop-color='%230e0b16'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='160' height='90' fill='url(%23g)'/%3E%3Ctext x='80' y='50' fill='%238b5cf6' font-size='11' text-anchor='middle' font-family='sans-serif'%3EROTATIONAL MOTION%3C/text%3E%3C/svg%3E">
+      <div class="body">
+        <div class="title">Why does angular momentum stay conserved when the skater pulls their arms in?</div>
+        <div class="meta">
+          <span class="badge solved">Solved</span>
+          <span>Physics</span><span>·</span><span>2h ago</span><span>·</span><span>4 answers</span>
+        </div>
+        <div class="actions">
+          <button class="btn small">Open</button>
+          <button class="btn small ghost" data-toast="Link copied">Share</button>
+          <button class="btn small ghost" data-flash="card-a">Flash</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="body">
+        <div class="title">Text-only card — no thumbnail</div>
+        <div class="meta"><span class="badge unsolved">Unsolved</span><span>Chemistry</span><span>·</span><span>18m ago</span></div>
+        <div class="actions"><button class="btn small">Open</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="body">
+        <div class="title">Multi-image solution</div>
+        <div class="img-grid">
+          <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Crect width='60' height='60' fill='%231a1526'/%3E%3Ctext x='30' y='34' fill='%23a78bfa' font-size='9' text-anchor='middle' font-family='sans-serif'%3E1%3C/text%3E%3C/svg%3E">
+          <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 60'%3E%3Crect width='60' height='60' fill='%231a1526'/%3E%3Ctext x='30' y='34' fill='%23a78bfa' font-size='9' text-anchor='middle' font-family='sans-serif'%3E2%3C/text%3E%3C/svg%3E">
+        </div>
+        <div class="meta">.img-grid — two up; add .single for one full-width image</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Form controls</div>
+  <div class="card"><div class="body">
+    <label for="g1">Text input</label>
+    <input id="g1" type="text" placeholder="Placeholder colour is v3">
+    <label for="g2">Email <small>— autofill this to see the v3.1 fix</small></label>
+    <input id="g2" type="email" name="email" autocomplete="email" placeholder="you@example.com">
+    <label for="g3">Password</label>
+    <input id="g3" type="password" autocomplete="current-password" placeholder="••••••••">
+    <label for="g4">Select <small>— dark option list is v3.1</small></label>
+    <select id="g4"><option>Physics</option><option>Chemistry</option><option>Maths</option></select>
+    <label for="g5">Textarea</label>
+    <textarea id="g5" rows="3" placeholder="Resizes vertically only"></textarea>
+    <label>Prefixed field <small>— prefix highlights on focus</small></label>
+    <div class="prefix-wrap">
+      <span class="prefix">pw.free.je/</span>
+      <input type="text" placeholder="my-doubt">
+    </div>
+    <div class="field-row" style="margin-top:12px">
+      <input type="text" placeholder="Side by side">
+      <input type="text" placeholder="via .field-row">
+    </div>
+    <label for="g6">Disabled</label>
+    <input id="g6" type="text" value="Not editable" disabled>
+    <label for="g7">File</label>
+    <input id="g7" type="file">
+  </div></div>
+
+  <div class="section-title">Upload progress</div>
+  <div class="card"><div class="body" data-upload>
+    <div class="title">Heavy file → HF dataset</div>
+    <div class="progress"><div class="bar" style="width:0"></div></div>
+    <div class="progress-label">Idle — press start</div>
+    <div class="actions"><button class="btn" data-upload-start>Upload file</button></div>
+  </div></div>
+
+  <div class="section-title">Poll</div>
+  <div class="card"><div class="body">
+    <div class="title">Which chapter next?</div>
+    <div>
+      <div class="poll-opt"><div class="fill"></div><div class="row"><span>Thermodynamics</span><b data-pct>—</b></div></div>
+      <div class="poll-opt"><div class="fill"></div><div class="row"><span>Electrostatics</span><b data-pct>—</b></div></div>
+      <div class="poll-opt"><div class="fill"></div><div class="row"><span>Optics</span><b data-pct>—</b></div></div>
+    </div>
+    <div class="meta">Tap an option — the chosen one gets .voted and a single breathing pulse.</div>
+  </div></div>
+
+  <div class="section-title">Stats</div>
+  <div class="stat-grid">
+    <div class="stat"><b>1,284</b><small>Doubts</small></div>
+    <div class="stat"><b>962</b><small>Solved</small></div>
+    <div class="stat"><b>318</b><small>Users</small></div>
+    <div class="stat"><b>4.7 GB</b><small>Library</small></div>
+  </div>
+
+  <div class="section-title">Table</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>User</th><th>Doubts</th><th>Answers</th><th>Joined</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>kacapower</td><td>42</td><td>118</td><td>2026-02-11</td><td>Admin</td></tr>
+        <tr><td>rhea.k</td><td>17</td><td>9</td><td>2026-05-03</td><td>Active</td></tr>
+        <tr><td>devansh</td><td>8</td><td>31</td><td>2026-06-22</td><td>Active</td></tr>
+        <tr><td>anon_442</td><td>1</td><td>0</td><td>2026-07-30</td><td>Muted</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Loading states</div>
+  <div class="card"><div class="body">
+    <div class="loader">Loading doubts…</div>
+    <div class="skeleton line"></div>
+    <div class="skeleton line"></div>
+    <div class="skeleton line short"></div>
+    <div class="skeleton" style="height:90px;margin-top:12px"></div>
+  </div></div>
+
+  <div class="section-title">Empty state</div>
+  <div class="card"><div class="empty-state">Nothing here yet — ask your first doubt.</div></div>
+
+  <div class="section-title">Overlays</div>
+  <div class="card"><div class="body"><div class="actions">
+    <button class="btn" data-modal="m1">Open modal</button>
+    <button class="btn ghost" data-toast="Saved to your library">Toast</button>
+    <button class="btn ghost" data-toast="Upload failed — try again" data-toast-err>Error toast</button>
+    <button class="btn ghost" data-drawer-open>Open drawer</button>
+  </div></div></div>
+
+  <div style="height:20px"></div>
+</main>
+
+<button class="fab" data-modal="m1" aria-label="Ask a doubt">+</button>
+
+<div class="modal" id="m1">
+  <div class="modal-box">
+    <div class="modal-head"><b>Ask a doubt</b><button class="icon-btn" data-modal-close aria-label="Close">✕</button></div>
+    <label for="m1t">Title</label>
+    <input id="m1t" type="text" placeholder="What's confusing you?">
+    <label for="m1s">Subject</label>
+    <select id="m1s"><option>Physics</option><option>Chemistry</option><option>Maths</option></select>
+    <label for="m1d">Details</label>
+    <textarea id="m1d" rows="4" placeholder="Optional — add what you've already tried"></textarea>
+    <label for="m1f">Attach images</label>
+    <input id="m1f" type="file" multiple>
+    <div class="actions" style="margin-top:16px">
+      <button class="btn" data-modal-close data-toast="Doubt posted">Post</button>
+      <button class="btn ghost" data-modal-close>Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast"></div>
+
+<nav class="bottom-nav">
+  <a href="feed.html"><span>◰</span>Home</a>
+  <a href="library.html"><span>▤</span>Library</a>
+  <a href="community.html"><span>◈</span>Community</a>
+  <a class="active" href="gallery.html"><span>◍</span>Gallery</a>
+</nav>
+
+<script src="mock.js"></script>
+</body>
+</html>

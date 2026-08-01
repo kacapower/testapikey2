@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PW · Library</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="icon-btn" data-drawer-open aria-expanded="false" aria-label="Open menu">☰</button>
+  <div class="brand">PW<span>·</span>library</div>
+  <div class="user-chip">kacapower</div>
+</header>
+
+<div class="drawer-backdrop"></div>
+<nav class="drawer" aria-label="Menu">
+  <div class="drawer-head">
+    <div class="avatar">K</div>
+    <div><b>kacapower</b><small>Class 12 · PCM</small></div>
+  </div>
+  <button class="drawer-link">Home</button>
+  <button class="drawer-link active">Library</button>
+  <button class="drawer-link">Community</button>
+  <button class="drawer-link">Settings</button>
+  <button class="drawer-link danger">Log out</button>
+</nav>
+
+<main class="page">
+
+  <label for="q" class="sr-only">Search the library</label>
+  <input id="q" type="search" placeholder="Search notes, PYQs, formula sheets…">
+
+  <div class="chips" style="margin-top:12px">
+    <button class="chip active">All</button>
+    <button class="chip">Notes</button>
+    <button class="chip">PYQs</button>
+    <button class="chip">Formula sheets</button>
+    <button class="chip">Videos</button>
+  </div>
+
+  <!-- live upload: the reason the 250 MB path exists -->
+  <div class="section-title">Upload</div>
+  <div class="card"><div class="body" data-upload>
+    <div class="title">Add a file to the library</div>
+    <div class="meta">Up to 250 MB · goes straight to the Hugging Face dataset, never through Supabase</div>
+    <label for="lf">Choose file</label>
+    <input id="lf" type="file">
+    <div class="field-row">
+      <div>
+        <label for="ls">Subject</label>
+        <select id="ls"><option>Physics</option><option>Chemistry</option><option>Maths</option></select>
+      </div>
+      <div>
+        <label for="lk">Type</label>
+        <select id="lk"><option>Notes</option><option>PYQ</option><option>Formula sheet</option></select>
+      </div>
+    </div>
+    <div class="progress" style="margin-top:14px"><div class="bar" style="width:0"></div></div>
+    <div class="progress-label">Idle — press upload to watch the progress sheen</div>
+    <div class="actions"><button class="btn" data-upload-start>Upload file</button></div>
+  </div></div>
+
+  <div class="section-title">
+    Files
+    <button class="btn small ghost" data-reload="filelist">Reload</button>
+  </div>
+
+  <div id="filelist" data-cards>
+
+    <div class="card" id="shared-file">
+      <div class="body">
+        <div class="title">📄 Rotational Motion — full chapter notes</div>
+        <div class="meta">
+          <span class="badge solved">Verified</span>
+          <span>Physics</span><span>·</span><span>PDF</span><span>·</span><span>12.4 MB</span><span>·</span><span>318 downloads</span>
+        </div>
+        <div class="actions">
+          <button class="btn small" data-toast="Download started">Download</button>
+          <button class="btn small ghost" data-toast="Link copied">Copy link</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="body">
+        <div class="title">📄 JEE Main 2025 — Chemistry PYQ set</div>
+        <div class="meta">
+          <span class="badge solved">Verified</span>
+          <span>Chemistry</span><span>·</span><span>PDF</span><span>·</span><span>3.1 MB</span><span>·</span><span>96 downloads</span>
+        </div>
+        <div class="actions">
+          <button class="btn small" data-toast="Download started">Download</button>
+          <button class="btn small ghost" data-toast="Link copied">Copy link</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="body">
+        <div class="title">🎬 Integration by parts — worked walkthrough</div>
+        <div class="meta">
+          <span class="badge unsolved">Unverified</span>
+          <span>Maths</span><span>·</span><span>MP4</span><span>·</span><span>184 MB</span><span>·</span><span>12 downloads</span>
+        </div>
+        <div class="actions">
+          <button class="btn small" data-toast="Download started">Download</button>
+          <button class="btn small ghost" data-flash="shared-file">Demo share-link flash</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="body">
+        <div class="title">📄 Organic Chemistry — reaction map (1 page)</div>
+        <div class="meta">
+          <span class="badge solved">Verified</span>
+          <span>Chemistry</span><span>·</span><span>PDF</span><span>·</span><span>820 KB</span><span>·</span><span>451 downloads</span>
+        </div>
+        <div class="actions"><button class="btn small" data-toast="Download started">Download</button></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="height:16px"></div>
+</main>
+
+<button class="fab" data-toast="Scroll up to the upload card" aria-label="Upload">↑</button>
+
+<div class="toast"></div>
+
+<nav class="bottom-nav">
+  <a href="feed.html"><span>◰</span>Home</a>
+  <a class="active" href="library.html"><span>▤</span>Library</a>
+  <a href="community.html"><span>◈</span>Community</a>
+  <a href="gallery.html"><span>◍</span>Gallery</a>
+</nav>
+
+<script src="mock.js"></script>
+</body>
+</html>

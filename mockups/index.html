@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PW · Mockups</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<div class="config-banner">Mockups — static pages linking the real ../style.css. Not part of the deployed app.</div>
+
+<header class="topbar">
+  <div class="brand">PW<span>·</span>mockups</div>
+  <div class="user-chip">v3.1</div>
+</header>
+
+<main class="page">
+
+  <div class="hero">
+    <h2>What these are for</h2>
+    <div class="empty">
+      Every page here loads <b>../style.css</b> directly, so edit the stylesheet and refresh —
+      the change shows up in all of them. Open on a phone, or use device emulation in devtools;
+      the theme is mobile-first and several fixes only appear at that size.
+    </div>
+  </div>
+
+  <div class="section-title">Pages</div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="gallery.html">Component gallery →</a></div>
+    <div class="meta"><span class="badge solved">Start here</span><span>every class in style.css, on one page</span></div>
+  </div></div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="feed.html">Feed →</a></div>
+    <div class="meta">hero · filter chips · card list · FAB · ask-a-doubt modal</div>
+  </div></div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="library.html">Library →</a></div>
+    <div class="meta">search · upload with live progress · file cards · share-link flash</div>
+  </div></div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="community.html">Community →</a></div>
+    <div class="meta">chat bubbles both directions · composer · the dvh height fix</div>
+  </div></div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="login.html">Login →</a></div>
+    <div class="meta"><span class="badge unsolved">Autofill test</span><span>let the browser fill it — inputs must stay dark</span></div>
+  </div></div>
+
+  <div class="card"><div class="body">
+    <div class="title"><a href="admin.html">Admin →</a></div>
+    <div class="meta">stat grid · wide table · moderation modal · danger zone</div>
+  </div></div>
+
+  <div class="section-title">Worth checking specifically</div>
+  <div class="card"><div class="body">
+    <div class="title">Things I changed that you should eyeball</div>
+    <div class="meta" style="display:block;line-height:1.9">
+      <b>1.</b> Tab with the keyboard anywhere — buttons and chips now show a focus ring. v2 had none.<br>
+      <b>2.</b> Login page, let the browser autofill — Chrome used to repaint those inputs white.<br>
+      <b>3.</b> Library, press Upload — watch the sheen sweep across the progress bar.<br>
+      <b>4.</b> Feed, tap a filter chip — the card list re-runs its staggered entrance. If that
+      flicker bothers you, it's five lines in §3 of the v3.1 layer.<br>
+      <b>5.</b> Community on a phone — the composer should stay put as the URL bar collapses.<br>
+      <b>6.</b> Admin, drag the users table sideways — it no longer drags the page with it.<br>
+      <b>7.</b> Any toast — it should no longer block taps at the bottom of the screen while invisible.<br>
+      <b>8.</b> Turn on "reduce motion" in your OS — everything should go still, nothing stuck invisible.
+    </div>
+    <div class="actions">
+      <button class="btn" data-toast="Like this — and it doesn't block taps when hidden">Fire a toast</button>
+      <button class="btn ghost" data-toast="Something went wrong" data-toast-err>Error toast</button>
+    </div>
+  </div></div>
+
+  <div class="section-title">Not included</div>
+  <div class="card"><div class="body">
+    <div class="meta" style="display:block;line-height:1.8">
+      These are presentation mockups. There is no auth, no Supabase call, no real upload, and
+      no moderation — <b>mock.js</b> only toggles CSS classes so the states are visible.
+      Nothing here should be copied into the app as-is.
+    </div>
+  </div></div>
+
+  <div style="height:24px"></div>
+</main>
+
+<div class="toast"></div>
+
+<script src="mock.js"></script>
+</body>
+</html>
