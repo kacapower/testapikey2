@@ -1,0 +1,11 @@
+# Gradio writes compressed output to a fixed path on every /compress call
+compressed_output.jpg
+
+# Local Claude Code permission allowlist (machine-specific)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
