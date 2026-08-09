@@ -1,0 +1,2031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Station Master — KHARGAON JN</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #0b0e12; color: #c9d4e0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden;
+  }
+  #app { position: relative; width: 100vw; height: 100vh; }
+  canvas#panel { display: block; width: 100%; height: 100%; background: #0b0e12; }
+  #hud {
+    position: absolute; top: 0; left: 0; right: 0; height: 40px;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 12px; box-sizing: border-box;
+    background: rgba(11,14,18,0.85); border-bottom: 1px solid #1c232c;
+    font-size: 13px; z-index: 5;
+  }
+  #hud .clock { font-size: 16px; color: #e8eef5; }
+  #hud .title { color: #6b7885; }
+  #hud .stage { margin-left: auto; color: #ffb020; }
+  #statusbar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 28px;
+    display: flex; align-items: center; padding: 0 12px;
+    background: rgba(11,14,18,0.85); border-top: 1px solid #1c232c;
+    font-size: 12px; color: #6b7885; z-index: 5;
+  }
+  #messagestrip {
+    position: absolute; top: 48px; left: 50%; transform: translateX(-50%);
+    padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: bold;
+    color: #e8eef5; background: rgba(11,14,18,0.95); border: 1px solid #1c232c;
+    opacity: 0; transition: opacity 0.4s; z-index: 6; pointer-events: none;
+    max-width: 70vw; text-align: center;
+  }
+  #messagestrip.err { border-color: #ff3b30; color: #ff3b30; }
+  #messagestrip.ok  { border-color: #2fd05a; color: #2fd05a; }
+  #helpbar {
+    position: absolute; right: 12px; bottom: 40px; padding: 6px 10px;
+    border: 1px solid #1c232c; border-radius: 6px; background: rgba(11,14,18,0.9);
+    font-size: 11px; color: #6b7885; z-index: 5; line-height: 1.6;
+  }
+  #debugpanel {
+    position: absolute; left: 12px; bottom: 40px;
+    padding: 8px 10px; border: 1px solid #1c232c; border-radius: 6px;
+    background: rgba(11,14,18,0.9); font-size: 11px; color: #6b7885;
+    z-index: 5; display: flex; flex-direction: column; gap: 6px; min-width: 360px;
+  }
+  #debugpanel .row { display: flex; align-items: center; gap: 8px; }
+  #debugpanel label { white-space: nowrap; color: #c9d4e0; }
+  #debugpanel input[type=range] { flex: 1; accent-color: #ff3b30; }
+  #debugpanel .occ { color: #ff3b30; white-space: nowrap; }
+  #debugpanel .head { color: #1f9c9c; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="panel"></canvas>
+  <div id="hud">
+    <span class="clock">10:00:00</span>
+    <span class="title">KHARGAON JN — Station Master</span>
+    <span class="stage">STEP 5 · ASPECTS — every signal derived, not chosen</span>
+  </div>
+  <div id="statusbar"></div>
+  <div id="messagestrip"></div>
+  <div id="helpbar">
+    click a signal → click a line to set a route<br>
+    right-click signal = cancel route · shift-click a point = throw it<br>
+    Esc = clear selection
+  </div>
+  <div id="debugpanel">
+    <div class="row">
+      <label>Debug: move train 12951 (Rajdhani, 597 m) along UP</label>
+      <input type="range" id="trainSlider" min="0" max="3600" step="1" value="0">
+    </div>
+    <div class="row">
+      <span id="headinfo" class="head">head 0 m</span>
+      <span id="occinfo" class="occ">circuits: —</span>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+/* ============================================================================
+   STATION MASTER — a 2D Indian railway signalling simulator.
+   Single-file build. Module order: CONST, layout, interlock, signalling,
+   trains, timetable, scoring, sim, render, input, ui, levels, tests.
+   ========================================================================== */
+
+/* ----------------------------------------------------------------------------
+   1. CONST — colours, physics constants, tunables
+   ------------------------------------------------------------------------- */
+const CONST = {
+  TICK_HZ: 60, DT: 1/60, MAX_TICKS_PER_FRAME: 300,
+  SPEEDS: [0, 1, 2, 5],
+  OVERLAP_M: 120,
+  APPROACH_LOCK_S: 120,
+  POINT_MOVE_S: 4,
+  CALL_ON_SPEED_KPH: 15,
+  CALL_ON_DWELL_S: 60,
+  MANUAL_AUTHORITY_KPH: 15,
+  TURNOUT_KPH: 30,
+  SHUNT_KPH: 15,
+  REACTION_S: 3,
+  LINE_CLEAR_REPLY_S: [2, 8],
+  DEADLOCK_SCAN_S: 5,
+  ACCEL:      { PAX: 0.5,  GOODS: 0.25 },
+  BRAKE_SVC:  { PAX: 0.7,  GOODS: 0.35 },
+  BRAKE_EMG:  { PAX: 1.2,  GOODS: 0.6  },
+  YARD_SCALE: 0.5,
+  APPROACH_SCALE: 0.04,
+  PRIORITY_WEIGHT: [0, 10, 8, 5, 3, 3, 1, 1],
+  MSG_STRIP_S: 6,
+  LOG_LINES: 200,
+  // train classes: priority, colour, typical length, max speed
+  TRAIN_CLASSES: {
+    RAJDHANI:  { priority: 1, colour: '#1b3a8c', lengthM: 597, maxSpeedKph: 130, accel: 0.5, brakeSvc: 0.7 },
+    SHATABDI:  { priority: 2, colour: '#2f5fd0', lengthM: 450, maxSpeedKph: 130, accel: 0.5, brakeSvc: 0.7 },
+    EXPRESS:   { priority: 3, colour: '#e0602c', lengthM: 550, maxSpeedKph: 110, accel: 0.5, brakeSvc: 0.7 },
+    PASSENGER: { priority: 4, colour: '#2f9e4f', lengthM: 350, maxSpeedKph:  75, accel: 0.5, brakeSvc: 0.7 },
+    MEMU:      { priority: 5, colour: '#1f9c9c', lengthM: 200, maxSpeedKph: 100, accel: 0.5, brakeSvc: 0.7 },
+    GOODS:     { priority: 6, colour: '#7a6a54', lengthM: 650, maxSpeedKph:  60, accel: 0.25, brakeSvc: 0.35 },
+    LIGHT_ENG: { priority: 7, colour: '#d8c33a', lengthM:  21, maxSpeedKph:  80, accel: 0.5, brakeSvc: 0.7 },
+  },
+  COL: {
+    BG:            '#0b0e12',
+    TRACK_IDLE:    '#3a4048',
+    TRACK_ROUTE:   '#e8eef5',
+    TRACK_OCCUPIED:'#ff3b30',
+    ROUTE_LOCKING: '#ffb020',
+    POINT_NORMAL:  '#2fd05a',
+    POINT_REVERSE: '#ffd23f',
+    LAMP_RED:      '#ff3b30',
+    LAMP_YELLOW:   '#ffcc00',
+    LAMP_GREEN:    '#2fd05a',
+    LAMP_OFF:      '#14181e',
+    LAMP_RIM:      '#2a3038',
+    TEXT:          '#c9d4e0',
+    TEXT_DIM:      '#6b7885',
+    FOULING:       '#ffffff',
+    FAILED_TC:     '#c04ad0',
+  },
+};
+
+/* ----------------------------------------------------------------------------
+   2. layout — station topology data + query helpers (pure)
+   ------------------------------------------------------------------------- */
+const layout = (function () {
+
+  const nodes = [
+    // UP direction (west -> east). BLOCK WEST ........ D1 O1 H1 [yard] AS1 ... BLOCK EAST
+    { id: 'N_BW_U',  x:  12, y: 150, kind: 'BOUNDARY' },
+    { id: 'N_D1',    x:  38, y: 150, kind: 'PLAIN' },
+    { id: 'N_O1',    x:  78, y: 150, kind: 'PLAIN' },
+    { id: 'N_H1',    x: 110, y: 150, kind: 'POINT_TOE' },     // P101 toe + H1 signal
+    { id: 'N_P101_N',x: 216, y: 150, kind: 'POINT_HEEL' },
+    { id: 'N_P101_R',x: 216, y:  90, kind: 'POINT_HEEL' },    // LOOP 1 west end
+    { id: 'N_P106_T',x: 280, y: 150, kind: 'POINT_TOE' },     // P106 crossover UP<->GOODS
+    { id: 'N_UM_C',  x: 350, y: 150, kind: 'PLAIN' },
+    { id: 'N_UM_D',  x: 430, y: 150, kind: 'PLAIN' },
+    { id: 'N_UM_E',  x: 510, y: 150, kind: 'PLAIN' },         // S2 + P108 toe
+    { id: 'N_P103_N',x: 580, y: 150, kind: 'POINT_HEEL' },
+    { id: 'N_P103_R',x: 580, y:  90, kind: 'POINT_HEEL' },    // LOOP 1 east end
+    { id: 'N_P103_T',x: 684, y: 150, kind: 'POINT_TOE' },
+    { id: 'N_AS1',   x: 730, y: 150, kind: 'PLAIN' },
+    { id: 'N_BE_U',  x: 785, y: 150, kind: 'BOUNDARY' },
+
+    // LOOP 1 (PF 1), y = 90
+    { id: 'N_L1B',   x: 330, y:  90, kind: 'PLAIN' },
+    { id: 'N_L1C',   x: 440, y:  90, kind: 'PLAIN' },
+    { id: 'N_P107_R',x: 492, y:  90, kind: 'POINT_HEEL' },    // P107 -> LOOP1 + S1
+
+    // DN direction (east -> west). BLOCK EAST ... D2 O2 H2 [yard] AS2 ... BLOCK WEST
+    { id: 'N_BE_D',  x: 784, y: 210, kind: 'BOUNDARY' },
+    { id: 'N_D2',    x: 754, y: 210, kind: 'PLAIN' },
+    { id: 'N_O2',    x: 716, y: 210, kind: 'PLAIN' },
+    { id: 'N_H2',    x: 684, y: 210, kind: 'POINT_TOE' },     // P104 toe + H2 signal
+    { id: 'N_P104_N',x: 580, y: 210, kind: 'POINT_HEEL' },
+    { id: 'N_P104_R',x: 580, y: 270, kind: 'POINT_HEEL' },    // GOODS east end
+    { id: 'N_DN_E',  x: 510, y: 210, kind: 'PLAIN' },
+    { id: 'N_DN_D',  x: 430, y: 210, kind: 'PLAIN' },
+    { id: 'N_DN_C',  x: 350, y: 210, kind: 'PLAIN' },
+    { id: 'N_P107_T',x: 280, y: 210, kind: 'POINT_TOE' },     // P107 crossover DN<->LOOP1 + S3
+    { id: 'N_P102_N',x: 216, y: 210, kind: 'POINT_HEEL' },
+    { id: 'N_P102_R',x: 216, y: 270, kind: 'POINT_HEEL' },    // GOODS west end
+    { id: 'N_P102_T',x: 112, y: 210, kind: 'POINT_TOE' },
+    { id: 'N_AS2',   x:  60, y: 210, kind: 'PLAIN' },
+    { id: 'N_BW_D',  x:  12, y: 210, kind: 'BOUNDARY' },
+
+    // GOODS LOOP, y = 270
+    { id: 'N_GL_B',  x: 330, y: 270, kind: 'PLAIN' },
+    { id: 'N_P105_T',x: 380, y: 270, kind: 'POINT_TOE' },     // P105 -> SIDING
+    { id: 'N_P105_N',x: 470, y: 270, kind: 'POINT_HEEL' },    // S4
+    { id: 'N_P106_R',x: 492, y: 270, kind: 'POINT_HEEL' },
+    { id: 'N_P108_R',x: 660, y: 270, kind: 'POINT_HEEL' },    // P108 -> UP MAIN
+
+    // SIDING (dead end), y = 330
+    { id: 'N_P105_R',x: 380, y: 330, kind: 'POINT_HEEL' },
+    { id: 'N_SID_BUF',x:450, y: 330, kind: 'BUFFER' },
+  ];
+
+  const nodeById = {};
+  for (const n of nodes) nodeById[n.id] = n;
+
+  const edges = [
+    // ---- UP approach (compressed) ----
+    { id: 'E_BWU',  from: 'N_BW_U', to: 'N_D1',   lengthM: 1000, drawScale: 0.026, circuitId: 'TC_BW_U',  lineName: 'UP',      maxSpeedKph: 110 },
+    { id: 'E_D1_O1',from: 'N_D1',   to: 'N_O1',   lengthM: 1000, drawScale: 0.040, circuitId: 'TC_D1',    lineName: 'UP',      maxSpeedKph: 110 },
+    { id: 'E_O1_H1',from: 'N_O1',   to: 'N_H1',   lengthM:  800, drawScale: 0.040, circuitId: 'TC_BH1',   lineName: 'UP',      maxSpeedKph: 110 },
+    // ---- yard, UP side ----
+    { id: 'E_H1_P101N',from:'N_H1', to:'N_P101_N',lengthM: 212, drawScale: 0.5, circuitId: 'TC_P101', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_P101D',   from:'N_H1', to:'N_P101_R',lengthM: 212, drawScale: 0.5, circuitId: 'TC_P101', lineName: 'LOOP 1',  maxSpeedKph: 30,  diverging: true },
+    { id: 'E_UM1',  from: 'N_P101_N', to: 'N_P106_T', lengthM: 128, drawScale: 0.5, circuitId: 'TC_UM1', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_UM2',  from: 'N_P106_T', to: 'N_UM_C',   lengthM: 140, drawScale: 0.5, circuitId: 'TC_UM2', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_UM3',  from: 'N_UM_C',   to: 'N_UM_D',   lengthM: 160, drawScale: 0.5, circuitId: 'TC_UM3', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_UM4',  from: 'N_UM_D',   to: 'N_UM_E',   lengthM: 160, drawScale: 0.5, circuitId: 'TC_UM4', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_UM5',  from: 'N_UM_E',   to: 'N_P103_N', lengthM: 140, drawScale: 0.5, circuitId: 'TC_UM5', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_UM6',  from: 'N_P103_N', to: 'N_P103_T', lengthM: 208, drawScale: 0.5, circuitId: 'TC_P103', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_P103D', from: 'N_P103_R', to: 'N_P103_T', lengthM: 240, drawScale: 0.5, circuitId: 'TC_P103', lineName: 'LOOP 1', maxSpeedKph: 30, diverging: true },
+    { id: 'E_AS1',  from: 'N_P103_T', to: 'N_AS1',    lengthM:  92, drawScale: 0.5, circuitId: 'TC_AS1', lineName: 'UP MAIN', maxSpeedKph: 110 },
+    { id: 'E_BEU',  from: 'N_AS1', to: 'N_BE_U', lengthM: 2000, drawScale: 0.0275, circuitId: 'TC_BE_U', lineName: 'BLOCK EAST', maxSpeedKph: 110 },
+    // ---- LOOP 1 ----
+    { id: 'E_L1A', from: 'N_P101_R', to: 'N_L1B',   lengthM: 228, drawScale: 0.5, circuitId: 'TC_L1A', lineName: 'LOOP 1', maxSpeedKph: 30 },
+    { id: 'E_L1B', from: 'N_L1B',    to: 'N_L1C',   lengthM: 220, drawScale: 0.5, circuitId: 'TC_L1B', lineName: 'LOOP 1', maxSpeedKph: 30 },
+    { id: 'E_L1C', from: 'N_L1C',    to: 'N_P107_R',lengthM: 104, drawScale: 0.5, circuitId: 'TC_L1C', lineName: 'LOOP 1', maxSpeedKph: 30 },
+    { id: 'E_L1D', from: 'N_P107_R', to: 'N_P103_R',lengthM: 176, drawScale: 0.5, circuitId: 'TC_L1D', lineName: 'LOOP 1', maxSpeedKph: 30 },
+    // ---- crossover P106 (UP MAIN <-> GOODS) ----
+    { id: 'E_P106D', from: 'N_P106_T', to: 'N_P106_R', lengthM: 480, drawScale: 0.5, circuitId: 'TC_CX1', lineName: 'CROSSOVER', maxSpeedKph: 30, diverging: true },
+    // ---- DN direction (east -> west) ----
+    { id: 'E_BED',  from: 'N_BE_D', to: 'N_D2',   lengthM: 1100, drawScale: 0.0273, circuitId: 'TC_BE_D', lineName: 'DN', maxSpeedKph: 110 },
+    { id: 'E_D2_O2',from: 'N_D2',   to: 'N_O2',   lengthM: 1000, drawScale: 0.038,  circuitId: 'TC_D2',   lineName: 'DN', maxSpeedKph: 110 },
+    { id: 'E_O2_H2',from: 'N_O2',   to: 'N_H2',   lengthM:  800, drawScale: 0.040,  circuitId: 'TC_BH2',  lineName: 'DN', maxSpeedKph: 110 },
+    { id: 'E_H2_P104N',from:'N_H2', to:'N_P104_N',lengthM: 208, drawScale: 0.5, circuitId: 'TC_P104', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_P104D',   from:'N_H2', to:'N_P104_R',lengthM: 208, drawScale: 0.5, circuitId: 'TC_P104', lineName: 'GOODS LOOP', maxSpeedKph: 30, diverging: true },
+    { id: 'E_DN1', from: 'N_P104_N', to: 'N_DN_E', lengthM: 140, drawScale: 0.5, circuitId: 'TC_DN1', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_DN2', from: 'N_DN_E',   to: 'N_DN_D', lengthM: 160, drawScale: 0.5, circuitId: 'TC_DN2', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_DN3', from: 'N_DN_D',   to: 'N_DN_C', lengthM: 160, drawScale: 0.5, circuitId: 'TC_DN3', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_DN4', from: 'N_DN_C',   to: 'N_P107_T',lengthM: 140, drawScale: 0.5, circuitId: 'TC_DN4', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_DN5', from: 'N_P107_T', to: 'N_P102_N',lengthM: 128, drawScale: 0.5, circuitId: 'TC_DN5', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_DN6', from: 'N_P102_N', to: 'N_P102_T',lengthM: 208, drawScale: 0.5, circuitId: 'TC_P102', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_P102D', from: 'N_P102_T', to: 'N_P102_R', lengthM: 240, drawScale: 0.5, circuitId: 'TC_P102', lineName: 'GOODS LOOP', maxSpeedKph: 30, diverging: true },
+    { id: 'E_AS2', from: 'N_P102_T', to: 'N_AS2',   lengthM: 104, drawScale: 0.5, circuitId: 'TC_AS2', lineName: 'DN MAIN', maxSpeedKph: 110 },
+    { id: 'E_BWD', from: 'N_AS2', to: 'N_BW_D', lengthM: 2000, drawScale: 0.024, circuitId: 'TC_BW_D', lineName: 'BLOCK WEST', maxSpeedKph: 110 },
+    // ---- crossover P107 (DN MAIN <-> LOOP1) ----
+    { id: 'E_P107D', from: 'N_P107_T', to: 'N_P107_R', lengthM: 480, drawScale: 0.5, circuitId: 'TC_CX2', lineName: 'CROSSOVER', maxSpeedKph: 30, diverging: true },
+    // ---- GOODS LOOP ----
+    { id: 'E_GLA', from: 'N_P102_R', to: 'N_GL_B',   lengthM: 228, drawScale: 0.5, circuitId: 'TC_GL1', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    { id: 'E_GLB', from: 'N_GL_B',   to: 'N_P105_T', lengthM: 100, drawScale: 0.5, circuitId: 'TC_GL2', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    { id: 'E_GLC', from: 'N_P105_T', to: 'N_P105_N', lengthM: 180, drawScale: 0.5, circuitId: 'TC_GL3', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    { id: 'E_GLD', from: 'N_P105_N', to: 'N_P106_R', lengthM:  44, drawScale: 0.5, circuitId: 'TC_GL4', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    { id: 'E_GLE', from: 'N_P106_R', to: 'N_P104_R', lengthM: 176, drawScale: 0.5, circuitId: 'TC_GL5', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    { id: 'E_GLF', from: 'N_P104_R', to: 'N_P108_R', lengthM: 160, drawScale: 0.5, circuitId: 'TC_GL6', lineName: 'GOODS LOOP', maxSpeedKph: 30 },
+    // ---- crossover P108 (UP MAIN <-> GOODS, east) ----
+    { id: 'E_P108D', from: 'N_UM_E', to: 'N_P108_R', lengthM: 380, drawScale: 0.5, circuitId: 'TC_CX3', lineName: 'CROSSOVER', maxSpeedKph: 30, diverging: true },
+    // ---- SIDING (dead end) ----
+    { id: 'E_SD0', from: 'N_P105_T', to: 'N_P105_R', lengthM: 120, drawScale: 0.5, circuitId: 'TC_SD', lineName: 'SIDING', maxSpeedKph: 15 },
+    { id: 'E_SD1', from: 'N_P105_R', to: 'N_SID_BUF', lengthM: 140, drawScale: 0.5, circuitId: 'TC_SD', lineName: 'SIDING', maxSpeedKph: 15 },
+  ];
+
+  const circuits = [
+    { id: 'TC_BW_U',  edgeIds: ['E_BWU'],   kind: 'BLOCK' },
+    { id: 'TC_D1',    edgeIds: ['E_D1_O1'], kind: 'PLAIN' },
+    { id: 'TC_BH1',   edgeIds: ['E_O1_H1'], kind: 'BERTH' },
+    { id: 'TC_P101',  edgeIds: ['E_H1_P101N','E_P101D'], kind: 'POINT_ZONE' },
+    { id: 'TC_UM1',   edgeIds: ['E_UM1'],   kind: 'PLAIN' },
+    { id: 'TC_UM2',   edgeIds: ['E_UM2'],   kind: 'PLAIN' },
+    { id: 'TC_UM3',   edgeIds: ['E_UM3'],   kind: 'PLAIN' },
+    { id: 'TC_UM4',   edgeIds: ['E_UM4'],   kind: 'BERTH' },
+    { id: 'TC_UM5',   edgeIds: ['E_UM5'],   kind: 'PLAIN' },
+    { id: 'TC_P103',  edgeIds: ['E_UM6'],   kind: 'POINT_ZONE' },
+    { id: 'TC_AS1',   edgeIds: ['E_AS1'],   kind: 'PLAIN' },
+    { id: 'TC_BE_U',  edgeIds: ['E_BEU'],   kind: 'BLOCK' },
+    { id: 'TC_L1A',   edgeIds: ['E_L1A'],   kind: 'PLAIN' },
+    { id: 'TC_L1B',   edgeIds: ['E_L1B'],   kind: 'PLAIN' },
+    { id: 'TC_L1C',   edgeIds: ['E_L1C'],   kind: 'BERTH' },
+    { id: 'TC_L1D',   edgeIds: ['E_L1D'],   kind: 'PLAIN' },
+    { id: 'TC_CX1',   edgeIds: ['E_P106D'], kind: 'POINT_ZONE' },
+    { id: 'TC_CX2',   edgeIds: ['E_P107D'], kind: 'POINT_ZONE' },
+    { id: 'TC_CX3',   edgeIds: ['E_P108D'], kind: 'POINT_ZONE' },
+    { id: 'TC_BE_D',  edgeIds: ['E_BED'],   kind: 'BLOCK' },
+    { id: 'TC_D2',    edgeIds: ['E_D2_O2'], kind: 'PLAIN' },
+    { id: 'TC_BH2',   edgeIds: ['E_O2_H2'], kind: 'BERTH' },
+    { id: 'TC_P104',  edgeIds: ['E_H2_P104N','E_P104D'], kind: 'POINT_ZONE' },
+    { id: 'TC_DN1',   edgeIds: ['E_DN1'],   kind: 'PLAIN' },
+    { id: 'TC_DN2',   edgeIds: ['E_DN2'],   kind: 'PLAIN' },
+    { id: 'TC_DN3',   edgeIds: ['E_DN3'],   kind: 'PLAIN' },
+    { id: 'TC_DN4',   edgeIds: ['E_DN4'],   kind: 'BERTH' },
+    { id: 'TC_DN5',   edgeIds: ['E_DN5'],   kind: 'PLAIN' },
+    { id: 'TC_P102',  edgeIds: ['E_DN6'],   kind: 'POINT_ZONE' },
+    { id: 'TC_AS2',   edgeIds: ['E_AS2'],   kind: 'PLAIN' },
+    { id: 'TC_BW_D',  edgeIds: ['E_BWD'],   kind: 'BLOCK' },
+    { id: 'TC_GL1',   edgeIds: ['E_GLA'],   kind: 'PLAIN' },
+    { id: 'TC_GL2',   edgeIds: ['E_GLB'],   kind: 'PLAIN' },
+    { id: 'TC_GL3',   edgeIds: ['E_GLC'],   kind: 'BERTH' },
+    { id: 'TC_GL4',   edgeIds: ['E_GLD'],   kind: 'PLAIN' },
+    { id: 'TC_GL5',   edgeIds: ['E_GLE'],   kind: 'PLAIN' },
+    { id: 'TC_GL6',   edgeIds: ['E_GLF'],   kind: 'PLAIN' },
+    { id: 'TC_SD',    edgeIds: ['E_SD0','E_SD1'], kind: 'PLAIN' },
+  ];
+
+  const points = [
+    { id: 'P101', toeNode: 'N_H1',     normalNode: 'N_P101_N', reverseNode: 'N_P101_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_P101', facingFor: ['UP'] },
+    { id: 'P102', toeNode: 'N_P102_T', normalNode: 'N_P102_N', reverseNode: 'N_P102_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_P102', facingFor: ['DN'] },
+    { id: 'P103', toeNode: 'N_P103_T', normalNode: 'N_P103_N', reverseNode: 'N_P103_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_P103', facingFor: ['UP'] },
+    { id: 'P104', toeNode: 'N_H2',     normalNode: 'N_P104_N', reverseNode: 'N_P104_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_P104', facingFor: ['DN'] },
+    { id: 'P105', toeNode: 'N_P105_T', normalNode: 'N_P105_N', reverseNode: 'N_P105_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_SD',   facingFor: [] },
+    { id: 'P106', toeNode: 'N_P106_T', normalNode: 'N_UM_C',   reverseNode: 'N_P106_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_CX1', facingFor: ['UP'] },
+    { id: 'P107', toeNode: 'N_P107_T', normalNode: 'N_DN_C',   reverseNode: 'N_P107_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_CX2', facingFor: ['DN'] },
+    { id: 'P108', toeNode: 'N_UM_E',   normalNode: 'N_P103_N', reverseNode: 'N_P108_R', position: 'NORMAL', moving: false, moveTimeS: 4, lockedBy: null, circuitId: 'TC_CX3', facingFor: ['UP'] },
+  ];
+
+  const signals = [
+    // ---- UP direction ----
+    { id: 'D1',  type: 'DISTANT',  atNode: 'N_D1',     facing: 'UP', lampCount: 3, hasCallingOn: false, hasRouteIndicator: false, plate: 'P', nextSignalIds: { NORMAL: 'O1' } },
+    { id: 'O1',  type: 'OUTER',    atNode: 'N_O1',     facing: 'UP', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'H1' } },
+    { id: 'H1',  type: 'HOME',     atNode: 'N_H1',     facing: 'UP', lampCount: 4, hasCallingOn: true,  hasRouteIndicator: true,  plate: null, nextSignalIds: { NORMAL: 'S2', REVERSE: 'S1' } },
+    { id: 'S1',  type: 'STARTER',  atNode: 'N_P107_R', facing: 'UP', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'AS1', REVERSE: 'AS1' } },
+    { id: 'S2',  type: 'STARTER',  atNode: 'N_UM_E',   facing: 'UP', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'AS1' } },
+    { id: 'AS1', type: 'ADVANCED_STARTER', atNode: 'N_AS1', facing: 'UP', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: null } },
+    // ---- DN direction ----
+    { id: 'D2',  type: 'DISTANT',  atNode: 'N_D2',     facing: 'DN', lampCount: 3, hasCallingOn: false, hasRouteIndicator: false, plate: 'P', nextSignalIds: { NORMAL: 'O2' } },
+    { id: 'O2',  type: 'OUTER',    atNode: 'N_O2',     facing: 'DN', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'H2' } },
+    { id: 'H2',  type: 'HOME',     atNode: 'N_H2',     facing: 'DN', lampCount: 4, hasCallingOn: true,  hasRouteIndicator: true,  plate: null, nextSignalIds: { NORMAL: 'S3', REVERSE: 'S4' } },
+    { id: 'S3',  type: 'STARTER',  atNode: 'N_P102_N', facing: 'DN', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'AS2' } },
+    { id: 'S4',  type: 'STARTER',  atNode: 'N_P105_N', facing: 'UP', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: 'AS1' } },
+    { id: 'AS2', type: 'ADVANCED_STARTER', atNode: 'N_AS2', facing: 'DN', lampCount: 4, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: { NORMAL: null } },
+    // ---- shunts ----
+    { id: 'SH1', type: 'SHUNT', atNode: 'N_P105_R', facing: 'DN', lampCount: 2, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: {} },
+    { id: 'SH2', type: 'SHUNT', atNode: 'N_P102_R', facing: 'DN', lampCount: 2, hasCallingOn: false, hasRouteIndicator: false, plate: null, nextSignalIds: {} },
+  ];
+
+  // fouling marks: { edgeId, offsetM } measured from edge.from
+  const foulingMarks = [
+    { id: 'F_P101_LOOP', edgeId: 'E_L1A', offsetM: 20 },   // LOOP 1 west fouling
+    { id: 'F_P103_LOOP', edgeId: 'E_L1D', offsetM: 150 },  // LOOP 1 east fouling
+    { id: 'F_P102_GOODS',edgeId: 'E_GLA', offsetM: 20 },   // GOODS west fouling
+    { id: 'F_P104_GOODS',edgeId: 'E_GLF', offsetM: 150 },  // GOODS east fouling
+    { id: 'F_SD_SIDING', edgeId: 'E_SD1', offsetM: 10 },   // SIDING fouling
+  ];
+
+  const routes = [
+    // ---- reception, UP ----
+    { id: 'R_H1_PF2', fromSignal: 'H1', toBerth: 'TC_UM4', class: 'MAIN',
+      edgeIds: ['E_H1_P101N','E_UM1','E_UM2','E_UM3','E_UM4'],
+      circuitIds: ['TC_P101','TC_UM1','TC_UM2','TC_UM3','TC_UM4'],
+      pointSettings: { P101:'NORMAL', P106:'NORMAL' },
+      overlapCircuitIds: ['TC_UM5','TC_P103','TC_AS1'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'S2', usableLengthM: 700 },
+    { id: 'R_H1_PF1', fromSignal: 'H1', toBerth: 'TC_L1C', class: 'MAIN',
+      edgeIds: ['E_P101D','E_L1A','E_L1B','E_L1C'],
+      circuitIds: ['TC_P101','TC_L1A','TC_L1B','TC_L1C'],
+      pointSettings: { P101:'REVERSE' },
+      overlapCircuitIds: ['TC_L1D','TC_P103','TC_AS1'], overlapM: 120,
+      diverging: true, indicatorText: '1', nextSignalId: 'S1', usableLengthM: 620 },
+    { id: 'R_H1_GL', fromSignal: 'H1', toBerth: 'TC_GL3', class: 'MAIN',
+      edgeIds: ['E_H1_P101N','E_UM1','E_P106D'],
+      circuitIds: ['TC_P101','TC_UM1','TC_CX1'],
+      pointSettings: { P101:'NORMAL', P106:'REVERSE' },
+      overlapCircuitIds: ['TC_GL4','TC_GL5'], overlapM: 120,
+      diverging: true, indicatorText: 'G', nextSignalId: 'S4', usableLengthM: 720 },
+    // ---- reception, DN ----
+    { id: 'R_H2_PF3', fromSignal: 'H2', toBerth: 'TC_DN4', class: 'MAIN',
+      edgeIds: ['E_H2_P104N','E_DN1','E_DN2','E_DN3','E_DN4'],
+      circuitIds: ['TC_P104','TC_DN1','TC_DN2','TC_DN3','TC_DN4'],
+      pointSettings: { P104:'NORMAL', P107:'NORMAL' },
+      overlapCircuitIds: ['TC_DN5','TC_P102','TC_AS2'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'S3', usableLengthM: 700 },
+    { id: 'R_H2_PF1', fromSignal: 'H2', toBerth: 'TC_L1C', class: 'MAIN',
+      edgeIds: ['E_H2_P104N','E_DN1','E_DN2','E_DN3','E_DN4','E_P107D','E_L1C'],
+      circuitIds: ['TC_P104','TC_DN1','TC_DN2','TC_DN3','TC_DN4','TC_CX2','TC_L1C'],
+      pointSettings: { P104:'NORMAL', P107:'REVERSE' },
+      overlapCircuitIds: ['TC_L1D','TC_P103','TC_AS1'], overlapM: 120,
+      diverging: true, indicatorText: '1', nextSignalId: 'S1', usableLengthM: 620 },
+    { id: 'R_H2_GL', fromSignal: 'H2', toBerth: 'TC_GL3', class: 'MAIN',
+      edgeIds: ['E_H2_P104N','E_DN1','E_DN2','E_DN3','E_DN4','E_DN5','E_DN6','E_P102D','E_GLA','E_GLB','E_GLC'],
+      circuitIds: ['TC_P104','TC_DN1','TC_DN2','TC_DN3','TC_DN4','TC_DN5','TC_P102','TC_GL1','TC_GL2','TC_GL3'],
+      pointSettings: { P104:'NORMAL', P102:'REVERSE' },
+      overlapCircuitIds: ['TC_GL4','TC_GL5'], overlapM: 120,
+      diverging: true, indicatorText: 'G', nextSignalId: 'S4', usableLengthM: 720 },
+    // ---- departure, UP ----
+    { id: 'R_S1_AS1', fromSignal: 'S1', toBerth: 'TC_AS1', class: 'MAIN',
+      edgeIds: ['E_L1D','E_P103D','E_AS1'],
+      circuitIds: ['TC_L1D','TC_P103','TC_AS1'],
+      pointSettings: { P103:'REVERSE', P107:'NORMAL' },
+      overlapCircuitIds: ['TC_BE_U'], overlapM: 120,
+      diverging: true, indicatorText: null, nextSignalId: 'AS1', usableLengthM: 620 },
+    { id: 'R_S2_AS1', fromSignal: 'S2', toBerth: 'TC_AS1', class: 'MAIN',
+      edgeIds: ['E_UM5','E_UM6','E_AS1'],
+      circuitIds: ['TC_UM5','TC_P103','TC_AS1'],
+      pointSettings: { P103:'NORMAL' },
+      overlapCircuitIds: ['TC_BE_U'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'AS1', usableLengthM: 700 },
+    { id: 'R_S4_AS1', fromSignal: 'S4', toBerth: 'TC_AS1', class: 'MAIN',
+      edgeIds: ['E_GLD','E_GLE','E_GLF','E_P108D','E_UM5','E_UM6','E_AS1'],
+      circuitIds: ['TC_GL4','TC_GL5','TC_GL6','TC_CX3','TC_UM5','TC_P103','TC_AS1'],
+      pointSettings: { P104:'NORMAL', P108:'REVERSE', P103:'NORMAL' },
+      overlapCircuitIds: ['TC_BE_U'], overlapM: 120,
+      diverging: true, indicatorText: null, nextSignalId: 'AS1', usableLengthM: 720 },
+    // ---- departure, DN ----
+    { id: 'R_S3_AS2', fromSignal: 'S3', toBerth: 'TC_AS2', class: 'MAIN',
+      edgeIds: ['E_DN6','E_AS2'],
+      circuitIds: ['TC_P102','TC_AS2'],
+      pointSettings: { P102:'NORMAL' },
+      overlapCircuitIds: ['TC_BW_D'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'AS2', usableLengthM: 700 },
+    // ---- block ----
+    { id: 'R_AS1_BLK', fromSignal: 'AS1', toBerth: 'TC_BE_U', class: 'MAIN',
+      edgeIds: ['E_BEU'], circuitIds: ['TC_BE_U'], pointSettings: {},
+      overlapCircuitIds: [], overlapM: 0, diverging: false, indicatorText: null,
+      nextSignalId: null, usableLengthM: 2000 },
+    { id: 'R_AS2_BLK', fromSignal: 'AS2', toBerth: 'TC_BW_D', class: 'MAIN',
+      edgeIds: ['E_BWD'], circuitIds: ['TC_BW_D'], pointSettings: {},
+      overlapCircuitIds: [], overlapM: 0, diverging: false, indicatorText: null,
+      nextSignalId: null, usableLengthM: 2000 },
+    // ---- shunting ----
+    { id: 'R_SH1_SD', fromSignal: 'SH1', toBerth: 'TC_SD', class: 'SHUNT',
+      edgeIds: ['E_SD1'], circuitIds: ['TC_SD'], pointSettings: { P105:'REVERSE' },
+      overlapCircuitIds: [], overlapM: 0, diverging: true, indicatorText: null,
+      nextSignalId: null, usableLengthM: 130 },
+  ];
+
+  // track circuit -> edges map
+  const edgesByCircuit = {};
+  for (const e of edges) {
+    (edgesByCircuit[e.circuitId] = edgesByCircuit[e.circuitId] || []).push(e);
+  }
+
+  // node -> incident edges map
+  const edgesByNode = {};
+  for (const e of edges) {
+    (edgesByNode[e.from] = edgesByNode[e.from] || []).push(e);
+    (edgesByNode[e.to]   = edgesByNode[e.to]   || []).push(e);
+  }
+
+  // signal -> approach berth circuit (ILK-050): the non-diverging edge that
+  // runs INTO the signal node from the direction trains approach
+  const signalApproachCircuit = {};
+  for (const s of signals) {
+    const n = nodeById[s.atNode];
+    if (!n) continue;
+    let best = null;
+    for (const e of edges) {
+      if (e.to !== s.atNode || e.diverging) continue;
+      const on = nodeById[e.from];
+      if (s.facing === 'UP' && on.x < n.x) best = e;
+      if (s.facing === 'DN' && on.x > n.x) best = e;
+    }
+    signalApproachCircuit[s.id] = best ? best.circuitId : null;
+  }
+
+  // block instrument name for an ADVANCED_STARTER (ILK-050 / BLK-020)
+  function signalBlockName(sig) {
+    return sig.id === 'AS1' ? 'BLOCK EAST' : sig.id === 'AS2' ? 'BLOCK WEST' : null;
+  }
+
+  // last edge of a route ends at a BUFFER node?
+  function routeEndsAtBuffer(r) {
+    if (!r || !r.edgeIds.length) return false;
+    const last = edges.find(x => x.id === r.edgeIds[r.edgeIds.length - 1]);
+    return last ? nodeById[last.to].kind === 'BUFFER' : false;
+  }
+
+  /* ---- structural validation (DAT-080) ---- */
+  function validate() {
+    const errs = [];
+    const nodeIds = new Set(nodes.map(n => n.id));
+    const edgeIds = new Set(edges.map(e => e.id));
+    const pointById = {};
+    for (const p of points) pointById[p.id] = p;
+
+    for (const e of edges) {
+      if (!nodeIds.has(e.from)) errs.push('EDGE ' + e.id + ': from node ' + e.from + ' does not exist');
+      if (!nodeIds.has(e.to))   errs.push('EDGE ' + e.id + ': to node ' + e.to + ' does not exist');
+    }
+    for (const n of nodes) {
+      if (n.kind === 'POINT_TOE' || n.kind === 'POINT_HEEL') {
+        const hasPoint = points.some(p =>
+          p.toeNode === n.id || p.normalNode === n.id || p.reverseNode === n.id);
+        if (!hasPoint) errs.push('NODE ' + n.id + ': point-kind node with no matching point record');
+      }
+    }
+    for (const tc of circuits) {
+      if (!tc.edgeIds.length) errs.push('CIRCUIT ' + tc.id + ': zero edges');
+      for (const eid of tc.edgeIds)
+        if (!edgeIds.has(eid)) errs.push('CIRCUIT ' + tc.id + ': edge ' + eid + ' does not exist');
+    }
+    for (const s of signals) {
+      if (!nodeIds.has(s.atNode)) errs.push('SIGNAL ' + s.id + ': atNode ' + s.atNode + ' not on any edge');
+      else {
+        const onEdge = edges.some(e => e.from === s.atNode || e.to === s.atNode);
+        if (!onEdge) errs.push('SIGNAL ' + s.id + ': atNode ' + s.atNode + ' is not on any edge');
+      }
+    }
+    // routes: edges connected path, point settings match points on path
+    for (const r of routes) {
+      const fromNode = nodeById[signals.find(s => s.id === r.fromSignal).atNode];
+      if (!r.edgeIds.length) { errs.push('ROUTE ' + r.id + ': empty edge path'); continue; }
+      let cur = fromNode;
+      let pathOk = true;
+      for (const eid of r.edgeIds) {
+        const e = edges.find(x => x.id === eid);
+        if (!e) { errs.push('ROUTE ' + r.id + ': edge ' + eid + ' does not exist'); pathOk = false; break; }
+        if (e.from === cur.id) cur = nodeById[e.to];
+        else if (e.to === cur.id) cur = nodeById[e.from];
+        else { errs.push('ROUTE ' + r.id + ': edge ' + eid + ' not connected at ' + cur.id); pathOk = false; break; }
+      }
+      // point settings must match points actually on path
+      const pathPointIds = new Set();
+      for (const eid of r.edgeIds) {
+        const e = edges.find(x => x.id === eid);
+        for (const p of points) {
+          if (e.from === p.toeNode || e.to === p.toeNode ||
+              e.from === p.normalNode || e.to === p.normalNode ||
+              e.from === p.reverseNode || e.to === p.reverseNode) pathPointIds.add(p.id);
+        }
+      }
+      for (const pid of Object.keys(r.pointSettings))
+        if (!pathPointIds.has(pid)) errs.push('ROUTE ' + r.id + ': pointSetting ' + pid + ' not on its path');
+      if (r.fromSignal !== 'DISTANT' && !r.overlapCircuitIds.length && r.class !== 'SHUNT') {
+        const berthTc = circuits.find(c => c.id === r.toBerth);
+        if (!berthTc || berthTc.kind !== 'BLOCK')
+          errs.push('ROUTE ' + r.id + ': no overlap circuits for a stop signal');
+      }
+      for (const ns of Object.values(signals.find(s => s.id === r.fromSignal).nextSignalIds)) {
+        if (ns && !signals.some(s => s.id === ns)) errs.push('SIGNAL ' + r.fromSignal + ': nextSignal ' + ns + ' does not exist');
+      }
+    }
+    // routes reaching a BUFFER must be SHUNT
+    for (const r of routes) {
+      const lastEid = r.edgeIds[r.edgeIds.length - 1];
+      const e = edges.find(x => x.id === lastEid);
+      if (e) {
+        const endNode = nodeById[e.to];
+        if (endNode.kind === 'BUFFER' && r.class !== 'SHUNT')
+          errs.push('ROUTE ' + r.id + ': reaches BUFFER ' + endNode.id + ' but is not SHUNT');
+      }
+    }
+    return errs;
+  }
+
+  /* ---- buildConflictTable (DAT-070) — populated in step 4, structural now ---- */
+  function buildConflictTable() {
+    const table = {};
+    for (const r of routes) {
+      table[r.id] = routes
+        .filter(o => o.id !== r.id && (conflicts(r, o)))
+        .map(o => o.id);
+    }
+    return table;
+  }
+
+  function circuitSet(r) { return new Set(r.circuitIds.concat(r.overlapCircuitIds)); }
+  function conflicts(a, b) {
+    const sa = circuitSet(a), sb = circuitSet(b);
+    for (const c of sa) if (sb.has(c)) return true;
+    for (const [pid, pos] of Object.entries(a.pointSettings))
+      if (b.pointSettings[pid] && b.pointSettings[pid] !== pos) return true;
+    return false;
+  }
+
+  function getNodes() { return nodes; }
+  function getEdges() { return edges; }
+  function getCircuits() { return circuits; }
+  function getPoints() { return points; }
+  function getSignals() { return signals; }
+  function getRoutes() { return routes; }
+  function getFoulingMarks() { return foulingMarks; }
+  function node(id) { return nodeById[id]; }
+  function signal(id) { return signals.find(s => s.id === id); }
+  function point(id) { return points.find(p => p.id === id); }
+  function route(id) { return routes.find(r => r.id === id); }
+  function edgesOnNode(id) { return edgesByNode[id] || []; }
+
+  return {
+    validate, buildConflictTable, conflicts,
+    getNodes, getEdges, getCircuits, getPoints, getSignals, getRoutes, getFoulingMarks,
+    node, signal, point, route, edgesOnNode,
+    signalApproachCircuit, signalBlockName, routeEndsAtBuffer,
+  };
+})();
+
+/* ----------------------------------------------------------------------------
+   3. interlock — the safety system. Pure logic: no drawing, no DOM, no random.
+   Unsafe things are impossible here, not merely discouraged (ILK-001).
+   ------------------------------------------------------------------------- */
+const interlock = (function () {
+  const S = {
+    IDLE: 'IDLE', LOCKING: 'LOCKING', LOCKED_AND_PROVED: 'LOCKED_AND_PROVED',
+    OCCUPIED: 'OCCUPIED', APPROACH_LOCKED: 'APPROACH_LOCKED',
+  };
+
+  function refuse(code, message) { return { ok: false, code, message }; }
+  function ok() { return { ok: true }; }
+
+  /* ILK-020 validation pipeline — returns the FIRST failure, in this order */
+  function requestRoute(routeId, st) {
+    const r = st.routeDef(routeId);
+    if (!r) return refuse('NO_SUCH_ROUTE', 'NO ROUTE — this road is not defined');
+    const cur = st.route(routeId);
+    if (cur && cur.state !== S.IDLE)
+      return refuse('ALREADY_SET', 'ROUTE ALREADY SET — ' + r.fromSignal + ' → ' + r.toBerth);
+
+    // 3. conflicts (shared circuit, opposing point, or geometric crossing)
+    for (const oid of st.conflictsWith(routeId)) {
+      const o = st.route(oid);
+      if (o && o.state !== S.IDLE) {
+        const or = st.routeDef(oid);
+        return refuse('CONFLICT', 'ROUTE REFUSED — conflicts with route ' + oid + ' (' + or.fromSignal + ' → ' + or.toBerth + ')');
+      }
+    }
+
+    // 4. any route circuit occupied
+    for (const c of r.circuitIds)
+      if (st.occupied(c)) return refuse('TRACK_OCCUPIED', 'ROUTE REFUSED — ' + c + ' occupied');
+
+    // 5. point locked by another route
+    for (const pid of Object.keys(r.pointSettings)) {
+      const p = st.point(pid);
+      if (p.lockedBy && p.lockedBy !== routeId)
+        return refuse('POINT_LOCKED', 'ROUTE REFUSED — point ' + pid + ' locked by ' + p.lockedBy);
+    }
+
+    // 6. point in an occupied point-zone circuit (ILK-032 — impossible, not penalised)
+    for (const pid of Object.keys(r.pointSettings)) {
+      const p = st.point(pid);
+      if (st.occupied(p.circuitId))
+        return refuse('POINT_UNDER_TRAIN', 'ROUTE REFUSED — cannot move ' + pid + ', train standing on it');
+    }
+
+    // 7. overlap clear for OVERLAP_M
+    for (const c of r.overlapCircuitIds)
+      if (st.occupied(c)) return refuse('OVERLAP_FOULED', 'ROUTE REFUSED — overlap beyond ' + r.fromSignal + ' is not clear (' + CONST.OVERLAP_M + ' m required)');
+
+    // 8. approaching train fits the destination (ILK-080)
+    if (r.class !== 'SHUNT' && st.approachingTrain) {
+      const tr = st.approachingTrain(routeId);
+      if (tr && tr.lengthM > r.usableLengthM)
+        return refuse('TRAIN_TOO_LONG', 'ROUTE REFUSED — ' + tr.name + ' (' + tr.class + ' ' + tr.id + ') is ' + tr.lengthM + ' m, ' + r.toBerth + ' holds ' + r.usableLengthM + ' m');
+    }
+
+    // 9. destination is not a BUFFER unless SHUNT
+    if (r.class !== 'SHUNT' && st.routeEndsAtBuffer(routeId))
+      return refuse('DEAD_END', 'ROUTE REFUSED — dead end, shunt movement only');
+
+    // 10. advanced starter needs Line Clear
+    const sig = st.signal(r.fromSignal);
+    if (sig.type === 'ADVANCED_STARTER' && !st.lineClearGranted(sig))
+      return refuse('NO_LINE_CLEAR', 'ROUTE REFUSED — ' + st.blockFor(sig) + ' has not granted Line Clear');
+
+    // 11. approach-locking timer still running on this route
+    if (cur && cur.approachLockS > 0)
+      return refuse('APPROACH_LOCKED', 'ROUTE LOCKED — approach locking, ' + Math.ceil(cur.approachLockS) + ' s remaining');
+
+    // 12. failed circuit in route (degraded working)
+    for (const c of r.circuitIds)
+      if (st.circuitFailed(c)) return refuse('CIRCUIT_FAILED', 'ROUTE REFUSED — ' + c + ' shows failed; use manual authority');
+
+    // ---- success: route reserved, points lock and begin to swing ----
+    if (cur) cur.state = S.LOCKING;
+    for (const pid of Object.keys(r.pointSettings)) {
+      const p = st.point(pid);
+      p.lockedBy = routeId;
+      const target = r.pointSettings[pid];
+      if (p.position !== target && !p.moving) { p.targetPosition = target; p.moving = true; p.moveTimerS = p.moveTimeS; }
+    }
+    return ok();
+  }
+
+  /* all points in the route proved in their required positions? */
+  function pointsProved(routeId, st) {
+    const r = st.routeDef(routeId);
+    if (!r) return false;
+    return Object.entries(r.pointSettings).every(([pid, pos]) => {
+      const p = st.point(pid);
+      return p.position === pos && !p.moving;
+    });
+  }
+
+  /* ILK-010: LOCKING → LOCKED_AND_PROVED once points settle */
+  function advance(routeId, st) {
+    const cur = st.route(routeId);
+    if (!cur || cur.state !== S.LOCKING) return;
+    if (pointsProved(routeId, st)) cur.state = S.LOCKED_AND_PROVED;
+  }
+
+  /* cancel a route (ILK-050..054): immediate, or approach-locked if a train
+     is inside its braking distance of the origin signal */
+  function cancelRoute(routeId, st) {
+    const r = st.routeDef(routeId);
+    const cur = st.route(routeId);
+    if (!r || !cur || cur.state === S.IDLE) return refuse('NOT_SET', 'No route is set from this signal');
+    if (cur.state === S.OCCUPIED) return refuse('IN_USE', 'ROUTE REFUSED — train is on the route, cannot cancel');
+    if (cur.state === S.APPROACH_LOCKED) return refuse('ALREADY_LOCKED', 'Route already in approach lock, ' + Math.ceil(cur.approachLockS) + ' s remaining');
+
+    if (st.trainApproaching(r.fromSignal)) {
+      // signal drops to RED immediately; points stay locked for APPROACH_LOCK_S
+      cur.state = S.APPROACH_LOCKED;
+      cur.approachLockS = CONST.APPROACH_LOCK_S;
+      return { ok: true, message: 'ROUTE CANCELLED — approach locking, 120 s', approachLocked: true };
+    }
+    releasePoints(routeId, st);
+    cur.state = S.IDLE;
+    return ok();
+  }
+
+  function releasePoints(routeId, st) {
+    const r = st.routeDef(routeId);
+    if (!r) return;
+    for (const pid of Object.keys(r.pointSettings)) {
+      const p = st.point(pid);
+      if (p.lockedBy === routeId) p.lockedBy = null;
+    }
+  }
+
+  /* ILK-030..033: a locked or occupied point MUST NOT move, by any code path */
+  function throwPoint(pointId, target, st) {
+    const p = st.point(pointId);
+    if (p.lockedBy) return refuse('POINT_LOCKED', 'REFUSED — point ' + pointId + ' is locked by ' + p.lockedBy);
+    if (st.occupied(p.circuitId)) return refuse('POINT_UNDER_TRAIN', 'REFUSED — cannot move ' + pointId + ', train standing on it');
+    if (p.moving) return refuse('POINT_MOVING', 'REFUSED — ' + pointId + ' is swinging');
+    if (p.position === target) return ok();
+    p.targetPosition = target;
+    p.moving = true;
+    p.moveTimerS = p.moveTimeS;
+    return ok();
+  }
+
+  return { requestRoute, cancelRoute, throwPoint, advance, pointsProved, releasePoints, STATES: S };
+})();
+
+/* ----------------------------------------------------------------------------
+   4. signalling — aspect utilities + the SIG-040 derivation cascade (step 5)
+   ------------------------------------------------------------------------- */
+const signalling = (function () {
+
+  // SIG-012 / SIG-013: lit lamp indices (bottom-to-top) for an aspect.
+  //   4-lamp MACLS running signals: index0 RED, index1 YELLOW, index2 GREEN,
+  //   index3 YELLOW(upper) — the second yellow sits ABOVE the green (fail-safe).
+  //   3-lamp Distant: index0 YELLOW, index1 GREEN, index2 YELLOW. Never RED.
+  //   2-lamp Shunt: position light.
+  function lampIndices(aspect, lampCount) {
+    if (lampCount === 4) {
+      switch (aspect) {
+        case 'RED':           return [0];
+        case 'YELLOW':        return [1];
+        case 'DOUBLE_YELLOW': return [1, 3];
+        case 'GREEN':         return [2];
+        default:              return [];
+      }
+    }
+    if (lampCount === 3) {  // Distant — must never show RED (SIG-030)
+      switch (aspect) {
+        case 'YELLOW':        return [0];
+        case 'DOUBLE_YELLOW': return [0, 2];
+        case 'GREEN':         return [1];
+        default:              return [1];  // RED is impossible; degrade to GREEN
+      }
+    }
+    if (lampCount === 2) {  // Shunt position light: RED=one lamp, PROCEED=both
+      return aspect === 'PROCEED' ? [0, 1] : [0];
+    }
+    return [];
+  }
+
+  function aspectLabel(aspect) {
+    switch (aspect) {
+      case 'RED': return 'R';
+      case 'YELLOW': return 'Y';
+      case 'DOUBLE_YELLOW': return 'YY';
+      case 'GREEN': return 'G';
+      case 'PROCEED': return 'P';
+      default: return '';
+    }
+  }
+
+  /* ---- step 5: aspect derivation (SIG-030 / SIG-040) ---------------------- */
+
+  // SIG-030: a Distant mirrors the state ahead and can never show RED.
+  //    outer RED   -> YELLOW
+  //    outer YELLOW-> DOUBLE_YELLOW
+  //    else        -> GREEN
+  function distantAspect(sig, st) {
+    const ahead = sig.nextSignalIds.NORMAL;
+    const outer = ahead ? st.signal(ahead) : null;
+    if (!outer) return 'GREEN';
+    if (outer.aspect === 'RED') return 'YELLOW';
+    if (outer.aspect === 'YELLOW') return 'DOUBLE_YELLOW';
+    return 'GREEN';
+  }
+
+  // SIG-025: a Shunt position light. PROCEED only when a shunt route is set,
+  // points proved and the destination clear; otherwise the single RED lamp.
+  function shuntAspect(sig, st) {
+    const route = st.activeRouteFrom(sig.id);
+    if (!route || route.state !== 'LOCKED_AND_PROVED') return 'RED';
+    if (route.circuitIds.some(c => st.occupied(c))) return 'RED';
+    for (const [pid, pos] of Object.entries(route.pointSettings))
+      if (st.point(pid).position !== pos || st.point(pid).moving) return 'RED';
+    return 'PROCEED';
+  }
+
+  // SIG-040: the pure per-signal cascade. Reads st() only; the ONLY side
+  // effect is the route indicator field on the signal, per rule 4.
+  function computeAspect(sig, st) {
+    if (sig.type === 'DISTANT') return distantAspect(sig, st);
+    if (sig.type === 'SHUNT')   return shuntAspect(sig, st);
+
+    const route = st.activeRouteFrom(sig.id);
+
+    // 1. No route -> RED
+    if (!route || route.state !== 'LOCKED_AND_PROVED') return 'RED';
+
+    // 2. Any circuit in the route, its berth, or its overlap occupied -> RED
+    if (route.circuitIds.some(c => st.occupied(c)))        return 'RED';
+    if (route.overlapCircuitIds.some(c => st.occupied(c))) return 'RED';
+
+    // 3. Any point not proved in the required position -> RED
+    for (const [pid, pos] of Object.entries(route.pointSettings))
+      if (st.point(pid).position !== pos || st.point(pid).moving) return 'RED';
+
+    // 4. Diverging route (turnout at restricted speed) -> YELLOW + indicator
+    if (route.diverging) { sig.routeIndicator = route.indicatorText; return 'YELLOW'; }
+    sig.routeIndicator = null;
+
+    // 5. Look ahead
+    const next = route.nextSignalId ? st.signal(route.nextSignalId) : null;
+    if (!next)                        return 'GREEN';   // exits the modelled world
+    if (next.aspect === 'RED')        return 'YELLOW';
+    if (next.aspect === 'YELLOW')     return 'DOUBLE_YELLOW';
+    return 'GREEN';                                      // next is DY or G
+  }
+
+  /* SIG-042 / SIG-043: a topological order over the "behind" relation so the
+     cascade converges in a single pass. A signal's aspect depends on the
+     aspect of the signal(s) ahead of it (nextSignalIds + every route's
+     nextSignalId). If the topology is cyclic (loop lines), fall back to a
+     fixed-point iteration capped at 8 passes. Computed once at load. */
+  let _order = null;
+  let _cyclic = false;
+  let _debugChanges = [];
+
+  function computeOrder() {
+    const sigIds = new Set(layout.getSignals().map(s => s.id));
+    const deps = {};
+    for (const s of layout.getSignals()) {
+      const d = new Set();
+      for (const ns of Object.values(s.nextSignalIds || {})) if (ns) d.add(ns);
+      for (const r of layout.getRoutes()) if (r.fromSignal === s.id && r.nextSignalId) d.add(r.nextSignalId);
+      deps[s.id] = d;
+    }
+    const order = [];
+    const emitted = new Set();
+    let cyclic = false;
+    let guard = 0;
+    while (emitted.size < sigIds.size && guard++ < sigIds.size * 2) {
+      let progress = false;
+      for (const id of sigIds) {
+        if (emitted.has(id)) continue;
+        let ok = true;
+        for (const d of deps[id]) if (sigIds.has(d) && !emitted.has(d)) { ok = false; break; }
+        if (ok) { emitted.add(id); order.push(id); progress = true; }
+      }
+      if (!progress) {
+        cyclic = true;
+        for (const id of sigIds) if (!emitted.has(id)) { emitted.add(id); order.push(id); }
+      }
+    }
+    return { order, cyclic };
+  }
+
+  // compute every signal's aspect, furthest-ahead first (SIG-042). Returns the
+  // list of { signalId, from, to } changes at debug verbosity (SIG-044).
+  function computeAspects(st) {
+    if (!_order) { const r = computeOrder(); _order = r.order; _cyclic = r.cyclic; }
+    const passes = _cyclic ? 8 : 2;
+    const changes = [];
+    for (let pass = 0; pass < passes; pass++) {
+      let changed = false;
+      for (const id of _order) {
+        const s = st.signal(id);
+        if (!s) continue;
+        const prev = s.aspect;
+        s.aspect = computeAspect(s, st);
+        if (prev !== s.aspect) { changes.push({ signalId: id, from: prev, to: s.aspect }); changed = true; }
+      }
+      if (!changed) break;
+    }
+    _debugChanges = changes;
+    return changes;
+  }
+
+  // SIG-043 warning state exposed for the debug overlay
+  function topologyCyclic() { return _cyclic; }
+
+  return { lampIndices, aspectLabel, computeAspect, computeAspects, distantAspect, shuntAspect, topologyCyclic };
+})();
+
+/* ----------------------------------------------------------------------------
+   5. trains — occupancy helpers (pure geometry over layout data)
+   ------------------------------------------------------------------------- */
+const trains = (function () {
+  const edgeById = {};
+  for (const e of layout.getEdges()) edgeById[e.id] = e;
+
+  function edge(id) { return edgeById[id]; }
+
+  // total length of an ordered edge path
+  function pathLength(path) {
+    let m = 0;
+    for (const eid of path) m += edge(eid).lengthM;
+    return m;
+  }
+
+  // position at distance `dist` along an ordered edge path.
+  // Returns { edgeId, offsetM } where offsetM is measured from edge.from.
+  function positionAt(path, dist) {
+    let remaining = Math.max(0, dist);
+    for (const eid of path) {
+      const e = edge(eid);
+      if (remaining <= e.lengthM) return { edgeId: eid, offsetM: remaining, edge: e };
+      remaining -= e.lengthM;
+    }
+    const last = edge(path[path.length - 1]);
+    return { edgeId: last.id, offsetM: last.lengthM, edge: last };
+  }
+
+  // Ordered circuit IDs occupied by a train whose head is at headDist and
+  // body stretches back lengthM along the path. TRN-041: full body counts.
+  function occupiedCircuits(path, headDist, lengthM) {
+    const tail = Math.max(0, headDist - lengthM);
+    const out = [];
+    let acc = 0;
+    for (const eid of path) {
+      const e = edge(eid);
+      const start = acc, end = acc + e.lengthM;
+      if (end > tail && start < headDist && out.indexOf(e.circuitId) === -1) out.push(e.circuitId);
+      acc = end;
+    }
+    return out;
+  }
+
+  // Polyline points (schematic px) covering the train body from tail to head.
+  // REN-022: train drawn length is governed by the same edge drawScale used in
+  // the diagram, because these are the schematic coordinates themselves.
+  function bodyPoints(path, headDist, lengthM) {
+    const tail = Math.max(0, headDist - lengthM);
+    const pts = [];
+    let acc = 0;
+    for (const eid of path) {
+      const e = edge(eid);
+      const start = acc, end = acc + e.lengthM;
+      if (end <= tail || start >= headDist) { acc = end; continue; }
+      const s = Math.max(start, tail), t = Math.min(end, headDist);
+      const a = layout.node(e.from), b = layout.node(e.to);
+      const fa = (s - start) / e.lengthM, fb = (t - start) / e.lengthM;
+      const ax = a.x + (b.x - a.x) * fa, ay = a.y + (b.y - a.y) * fa;
+      const bx = a.x + (b.x - a.x) * fb, by = a.y + (b.y - a.y) * fb;
+      if (pts.length === 0 || Math.hypot(ax - pts[pts.length - 1][0], ay - pts[pts.length - 1][1]) > 0.5)
+        pts.push([ax, ay]);
+      pts.push([bx, by]);
+      acc = end;
+    }
+    return pts;
+  }
+
+  // head point of a train (schematic px) — used for labels / tooltips
+  function headPoint(path, headDist) {
+    const p = positionAt(path, headDist);
+    const e = p.edge;
+    const a = layout.node(e.from), b = layout.node(e.to);
+    const f = p.offsetM / e.lengthM;
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, edgeId: p.edgeId, offsetM: p.offsetM };
+  }
+
+  return { edge, pathLength, positionAt, occupiedCircuits, bodyPoints, headPoint };
+})();
+
+/* ----------------------------------------------------------------------------
+   6. timetable — not yet built (step 8)
+   ------------------------------------------------------------------------- */
+const timetable = {};
+
+/* ----------------------------------------------------------------------------
+   7. scoring — not yet built (step 8)
+   ------------------------------------------------------------------------- */
+const scoring = {};
+
+/* ----------------------------------------------------------------------------
+   8. sim — state + fixed-timestep loop (partial: occupancy for step 2)
+   ------------------------------------------------------------------------- */
+const sim = (function () {
+  // deterministic PRNG (mulberry32) — TEC-023: all randomness routes through this
+  function rng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const state = {
+    gameTime: 0,
+    seed: 12345,
+    rng: null,
+    trains: [],
+    routes: {},          // routeId -> { state, approachLockS, signalId }
+    failedCircuits: new Set(),
+    blocks: {},          // 'BLOCK EAST'/'BLOCK WEST' -> instrument state
+  };
+
+  // each point's resting position (captured from the shipped layout)
+  const defaultPointPos = {};
+  for (const p of layout.getPoints()) defaultPointPos[p.id] = p.position;
+
+  function reset(seed) {
+    state.seed = seed;
+    state.rng = rng(seed);
+    state.gameTime = 0;
+    state.trains = [];
+    state.failedCircuits = new Set();
+    state.blocks = { 'BLOCK EAST': 'LINE_CLOSED', 'BLOCK WEST': 'LINE_CLOSED' };
+    // route runtime states keyed by route id (ILK-010)
+    state.routes = {};
+    for (const r of layout.getRoutes()) state.routes[r.id] = { state: 'IDLE', approachLockS: 0, signalId: r.fromSignal };
+    // point runtime state fully restored (T12/T13 depend on clean state per test)
+    for (const p of layout.getPoints()) {
+      const def = defaultPointPos[p.id] || 'NORMAL';
+      p.position = def; p.moving = false; p.lockedBy = null; p.moveTimerS = 0;
+      p.targetPosition = def;
+    }
+  }
+
+  /* ---- interlock state accessors (pure view over sim state) ---- */
+  function st() {
+    const occ = occupiedSet();
+    return {
+      routeDef: (id) => layout.route(id),
+      route: (id) => state.routes[id],
+      // SIG-040: the active (non-idle) route from a signal, merged with its
+      // static definition so computeAspect sees circuitIds/pointSettings/...
+      activeRouteFrom: (signalId) => {
+        for (const rid in state.routes) {
+          if (state.routes[rid].signalId === signalId && state.routes[rid].state !== 'IDLE') {
+            const def = layout.route(rid);
+            return Object.assign({ id: rid }, def, state.routes[rid]);
+          }
+        }
+        return null;
+      },
+      conflictsWith: (id) => layout.buildConflictTable()[id] || [],
+      occupied: (c) => occ.has(c),
+      point: (id) => layout.point(id),
+      routeEndsAtBuffer: (id) => layout.routeEndsAtBuffer(layout.route(id)),
+      signal: (id) => layout.signal(id),
+      lineClearGranted: (sig) => state.blocks[layout.signalBlockName(sig)] === 'LINE_CLEAR_GRANTED',
+      blockFor: (sig) => layout.signalBlockName(sig),
+      circuitFailed: (c) => state.failedCircuits.has(c),
+      // ILK-080: the train occupying the origin signal's approach berth
+      approachingTrain: (routeId) => {
+        const r = layout.route(routeId);
+        if (!r) return null;
+        const ac = layout.signalApproachCircuit[r.fromSignal];
+        if (!ac || !occ.has(ac)) return null;
+        return state.trains.find(t => t.occupiedCircuits.indexOf(ac) !== -1) || null;
+      },
+      trainApproaching: (signalId) => {
+        const ac = layout.signalApproachCircuit[signalId];
+        return ac ? occ.has(ac) : false;
+      },
+    };
+  }
+
+  /* ---- player-facing interlocking commands (INP) ---- */
+  function requestRoute(routeId) { return interlock.requestRoute(routeId, st()); }
+  function cancelRoute(routeId) { return interlock.cancelRoute(routeId, st()); }
+  function throwPoint(pid, target) { return interlock.throwPoint(pid, target, st()); }
+
+  function addTrain(cfg) {
+    const cls = CONST.TRAIN_CLASSES[cfg.class];
+    state.trains.push({
+      id: cfg.id,
+      name: cfg.name,
+      class: cfg.class,
+      priority: cls.priority,
+      lengthM: cfg.lengthM !== undefined ? cfg.lengthM : cls.lengthM,
+      colour: cfg.colour || cls.colour,
+      maxSpeedKph: cfg.maxSpeedKph !== undefined ? cfg.maxSpeedKph : cls.maxSpeedKph,
+      direction: cfg.direction || 'UP',
+      path: cfg.path,
+      headDistM: cfg.headDistM || 0,
+      speedMps: 0,
+      state: 'STOPPED',
+      occupiedCircuits: [],
+    });
+    updateOccupancy();
+  }
+
+  // TRN-040: occupancy derived every tick from train extents
+  function updateOccupancy() {
+    for (const t of state.trains) {
+      t.occupiedCircuits = trains.occupiedCircuits(t.path, t.headDistM, t.lengthM);
+    }
+  }
+
+  function occupiedSet() {
+    const s = new Set();
+    for (const t of state.trains) for (const c of t.occupiedCircuits) s.add(c);
+    return s;
+  }
+
+  /* advance point swing timers (DAT-050) */
+  function tickPoints() {
+    for (const p of layout.getPoints()) {
+      if (p.moving && p.moveTimerS > 0) {
+        p.moveTimerS -= CONST.DT;
+        if (p.moveTimerS <= 0) { p.moving = false; p.position = p.targetPosition; }
+      }
+    }
+  }
+
+  /* ILK-010: LOCKING → LOCKED_AND_PROVED once every point is proved in place */
+  function tickRoutes() {
+    for (const rid in state.routes) {
+      const r = state.routes[rid];
+      if (r.state === 'LOCKING') interlock.advance(rid, st());
+      else if (r.state === 'APPROACH_LOCKED') {
+        r.approachLockS -= CONST.DT;
+        if (r.approachLockS <= 0) {
+          interlock.releasePoints(rid, st());
+          r.state = 'IDLE';
+        }
+      }
+    }
+  }
+
+  function tick() {
+    state.gameTime += CONST.DT;
+    tickPoints();
+    tickRoutes();
+    updateOccupancy();
+    signalling.computeAspects(st());
+  }
+
+  return {
+    state, reset, addTrain, updateOccupancy, occupiedSet, tick,
+    requestRoute, cancelRoute, throwPoint, st,
+  };
+})();
+
+/* ----------------------------------------------------------------------------
+   13. tests — in-file self-test harness (grows each step; run ?test=1)
+   ------------------------------------------------------------------------- */
+const tests = (function () {
+  const results = [];
+
+  function check(name, fn) {
+    try {
+      const pass = !!fn();
+      results.push({ name, pass, err: null });
+    } catch (e) {
+      results.push({ name, pass: false, err: String(e) });
+    }
+  }
+
+  function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+  function run() {
+    results.length = 0;
+
+    // T10 lamp map — each aspect's lit indices match SIG-012 / SIG-013 exactly
+    check('T10 lamp map (4-lamp)', () => {
+      const m = {
+        RED: [0], YELLOW: [1], DOUBLE_YELLOW: [1, 3], GREEN: [2],
+      };
+      return Object.entries(m).every(([a, idx]) => eq(signalling.lampIndices(a, 4), idx));
+    });
+    check('T10b lamp map (3-lamp distant)', () => {
+      const m = { YELLOW: [0], DOUBLE_YELLOW: [0, 2], GREEN: [1] };
+      return Object.entries(m).every(([a, idx]) => eq(signalling.lampIndices(a, 3), idx));
+    });
+    check('T10c distant can never be RED', () => {
+      // a 3-lamp distant asked for RED must not light the red-index; degrades instead
+      return !eq(signalling.lampIndices('RED', 3), [0]) &&
+        signalling.lampIndices('RED', 3).length === 1;
+    });
+
+    // ---- STEP 5: aspect derivation (T01–T09, SIG-040) ----
+    // helper: set a route directly to LOCKED_AND_PROVED with points proved
+    function forceRoute(routeId) {
+      const cur = sim.state.routes[routeId];
+      if (!cur) throw new Error('no such route ' + routeId);
+      cur.state = 'LOCKED_AND_PROVED';
+      const def = layout.route(routeId);
+      for (const [pid, pos] of Object.entries(def.pointSettings)) {
+        const p = layout.point(pid);
+        p.position = pos; p.moving = false; p.lockedBy = routeId;
+      }
+    }
+
+    check('T01 aspect: no route => RED', () => {
+      sim.reset(1111);
+      signalling.computeAspects(sim.st());
+      return signalling.computeAspect(layout.signal('H1'), sim.st()) === 'RED' &&
+        signalling.computeAspect(layout.signal('S2'), sim.st()) === 'RED' &&
+        layout.signal('H1').aspect === 'RED';
+    });
+    check('T02 aspect: route occupied => RED', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');
+      sim.addTrain({ id: 1, name: 'T', class: 'LIGHT_ENG', direction: 'UP',
+        path: ['E_H1_P101N', 'E_UM1'], headDistM: 120 });  // occupies TC_P101
+      signalling.computeAspects(sim.st());
+      return sim.occupiedSet().has('TC_P101') &&
+        signalling.computeAspect(layout.signal('H1'), sim.st()) === 'RED';
+    });
+    check('T03 aspect: overlap fouled => RED', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');
+      sim.addTrain({ id: 1, name: 'T', class: 'LIGHT_ENG', direction: 'UP',
+        path: ['E_UM5'], headDistM: 50 });  // TC_UM5 is H1→PF2's overlap
+      signalling.computeAspects(sim.st());
+      return signalling.computeAspect(layout.signal('H1'), sim.st()) === 'RED';
+    });
+    check('T04 aspect: diverging => YELLOW + indicator, never GREEN', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF1');  // H1 → LOOP1, P101 REVERSE, indicator '1'
+      signalling.computeAspects(sim.st());
+      const a = signalling.computeAspect(layout.signal('H1'), sim.st());
+      return a === 'YELLOW' && layout.signal('H1').routeIndicator === '1' &&
+        a !== 'GREEN';
+    });
+    check('T05 aspect: straight, next RED => YELLOW', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');  // next signal S2 has no route => RED
+      signalling.computeAspects(sim.st());
+      return signalling.computeAspect(layout.signal('H1'), sim.st()) === 'YELLOW';
+    });
+    check('T06 aspect: straight, next YELLOW => DOUBLE_YELLOW', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');
+      forceRoute('R_S2_AS1');
+      layout.signal('AS1').aspect = 'RED';        // S2 looks ahead to AS1
+      signalling.computeAspects(sim.st());
+      return signalling.computeAspect(layout.signal('S2'), sim.st()) === 'YELLOW' &&
+        signalling.computeAspect(layout.signal('H1'), sim.st()) === 'DOUBLE_YELLOW';
+    });
+    check('T07 aspect: straight, next GREEN => GREEN', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');
+      forceRoute('R_S2_AS1');
+      forceRoute('R_AS1_BLK');     // AS1's own route clear => AS1 naturally GREEN
+      signalling.computeAspects(sim.st());
+      return signalling.computeAspect(layout.signal('AS1'), sim.st()) === 'GREEN' &&
+        signalling.computeAspect(layout.signal('S2'), sim.st()) === 'GREEN' &&
+        signalling.computeAspect(layout.signal('H1'), sim.st()) === 'GREEN';
+    });
+    // T08: pure-function four-aspect ladder. The shipped layout's overlap
+    // design makes a train in the block foul the Starter's overlap too (so a
+    // real train-beyond run gives RED/RED/YELLOW — authentic), so the full
+    // RED/YELLOW/DOUBLE_YELLOW/GREEN sequence is verified with a synthetic
+    // straight chain A→B→C→D and a train beyond D (TST-002: construct state
+    // directly, run the pure function, compare to expected).
+    function syntheticLadderSt() {
+      const aspects = { A: 'RED', B: 'RED', C: 'RED', D: 'RED' };
+      const sigs = { A: { id: 'A', aspect: 'RED' }, B: { id: 'B', aspect: 'RED' },
+                     C: { id: 'C', aspect: 'RED' }, D: { id: 'D', aspect: 'RED' } };
+      const occ = new Set(['TC_D']);
+      const routeDefs = {
+        R_A: { id: 'R_A', fromSignal: 'A', toBerth: 'TC_B', circuitIds: ['TC_A'],
+               overlapCircuitIds: [], pointSettings: {}, diverging: false,
+               indicatorText: null, nextSignalId: 'B' },
+        R_B: { id: 'R_B', fromSignal: 'B', toBerth: 'TC_C', circuitIds: ['TC_B'],
+               overlapCircuitIds: [], pointSettings: {}, diverging: false,
+               indicatorText: null, nextSignalId: 'C' },
+        R_C: { id: 'R_C', fromSignal: 'C', toBerth: 'TC_D', circuitIds: ['TC_C'],
+               overlapCircuitIds: [], pointSettings: {}, diverging: false,
+               indicatorText: null, nextSignalId: 'D' },
+        R_D: { id: 'R_D', fromSignal: 'D', toBerth: 'TC_E', circuitIds: ['TC_D'],
+               overlapCircuitIds: [], pointSettings: {}, diverging: false,
+               indicatorText: null, nextSignalId: null },
+      };
+      const states = { R_A: 'LOCKED_AND_PROVED', R_B: 'LOCKED_AND_PROVED',
+                       R_C: 'LOCKED_AND_PROVED', R_D: 'LOCKED_AND_PROVED' };
+      return {
+        activeRouteFrom: (sig) => {
+          const rid = { A: 'R_A', B: 'R_B', C: 'R_C', D: 'R_D' }[sig];
+          return rid ? Object.assign({}, routeDefs[rid], { state: states[rid] }) : null;
+        },
+        occupied: (c) => occ.has(c),
+        point: () => ({ position: 'NORMAL', moving: false }),
+        signal: (id) => sigs[id] || null,
+      };
+    }
+    check('T08 four-aspect ladder (pure)', () => {
+      const st = syntheticLadderSt();
+      const s = (id) => Object.assign({ type: 'HOME', nextSignalIds: {} }, st.signal(id));
+      // cascade farthest-ahead first, writing each result back (as computeAspects
+      // does for the shipped layout's topo order) so the next signal sees it
+      for (const id of ['D', 'C', 'B', 'A']) {
+        const cur = st.signal(id);
+        cur.aspect = signalling.computeAspect(s(id), st);
+      }
+      const D = st.signal('D').aspect, C = st.signal('C').aspect;
+      const B = st.signal('B').aspect, A = st.signal('A').aspect;
+      return D === 'RED' && C === 'YELLOW' && B === 'DOUBLE_YELLOW' && A === 'GREEN';
+    });
+    check('T08b cascade GREEN at clear signal', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');
+      forceRoute('R_S2_AS1');
+      forceRoute('R_AS1_BLK');
+      signalling.computeAspects(sim.st());   // no train: all three straight & clear
+      return layout.signal('AS1').aspect === 'GREEN' &&
+        layout.signal('S2').aspect === 'GREEN' &&
+        layout.signal('H1').aspect === 'GREEN';
+    });
+    check('T08c real three-signal with train beyond', () => {
+      sim.reset(1111);
+      forceRoute('R_H1_PF2');   // H1 → PF2 (straight)
+      forceRoute('R_S2_AS1');   // S2 → AS1 (straight)
+      forceRoute('R_AS1_BLK');  // AS1 → block (straight, exits world)
+      sim.addTrain({ id: 1, name: 'T', class: 'LIGHT_ENG', direction: 'UP',
+        path: ['E_BEU'], headDistM: 40 });   // train beyond AS1 in the block
+      signalling.computeAspects(sim.st());
+      // AS1 RED (train on its route); S2 RED (its overlap IS the occupied
+      // block — authentic); H1 YELLOW (next signal S2 is RED).
+      return layout.signal('AS1').aspect === 'RED' &&
+        layout.signal('S2').aspect === 'RED' &&
+        layout.signal('H1').aspect === 'YELLOW';
+    });
+    check('T09 distant never RED', () => {
+      sim.reset(1111);
+      // no routes at all
+      signalling.computeAspects(sim.st());
+      const d1 = layout.signal('D1'), d2 = layout.signal('D2');
+      const clean = [d1.aspect, d2.aspect].every(a => a === 'YELLOW' || a === 'DOUBLE_YELLOW' || a === 'GREEN');
+      // all routes set, clear
+      for (const r of layout.getRoutes()) if (r.class !== 'SHUNT') forceRoute(r.id);
+      signalling.computeAspects(sim.st());
+      const full = [d1.aspect, d2.aspect].every(a => a === 'YELLOW' || a === 'DOUBLE_YELLOW' || a === 'GREEN');
+      return clean && full && d1.aspect !== 'RED' && d2.aspect !== 'RED';
+    });
+
+    // ---- STEP 4: interlocking (T11–T13) ----
+    check('T11 conflict refusal', () => {
+      sim.reset(1111);
+      const a = sim.requestRoute('R_H1_PF1');          // set H1 → LOOP1 (P101 REVERSE)
+      const b = sim.requestRoute('R_H1_PF2');          // conflicts (shares TC_P101)
+      return a.ok && !b.ok && b.code === 'CONFLICT' && /R_H1_PF1/.test(b.message);
+    });
+    check('T12 point locked', () => {
+      sim.reset(1111);
+      const set = sim.requestRoute('R_H1_PF1');        // P101 locked by this route
+      const res = sim.throwPoint('P101', 'REVERSE');
+      return set.ok && layout.point('P101').lockedBy === 'R_H1_PF1' &&
+        !res.ok && res.code === 'POINT_LOCKED' &&
+        layout.point('P101').position === 'NORMAL';    // unchanged while locked
+    });
+    check('T13 point under train', () => {
+      sim.reset(1111);
+      // park a train body covering TC_P101 (a point-zone circuit)
+      sim.addTrain({ id: 777, name: 'T', class: 'GOODS', direction: 'UP',
+        path: ['E_H1_P101N', 'E_UM1', 'E_UM2'], headDistM: 300 });
+      const occ = sim.occupiedSet().has('TC_P101');
+      const res = sim.throwPoint('P101', 'REVERSE');
+      return occ && !res.ok && res.code === 'POINT_UNDER_TRAIN';
+    });
+    check('T14 long goods refused', () => {
+      sim.reset(1111);
+      // 651 m rake approaching H1, head 100 m short of H1 (still in TC_BH1)
+      sim.addTrain({ id: 58123, name: 'UP GOODS', class: 'GOODS', direction: 'UP',
+        path: ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1'], headDistM: 2700,
+        lengthM: 651 });
+      const res = sim.requestRoute('R_H1_PF1');   // LOOP1, usableLengthM 620
+      return !res.ok && res.code === 'TRAIN_TOO_LONG' &&
+        /651/.test(res.message) && /620/.test(res.message);
+    });
+
+    return results;
+  }
+
+  return { run, results };
+})();
+
+/* ----------------------------------------------------------------------------
+   9. render — all Canvas drawing (read-only over state)
+   ------------------------------------------------------------------------- */
+const render = (function () {
+  const col = CONST.COL;
+  let canvas, ctx, W, H;
+
+  function fit() {
+    const all = layout.getNodes();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of all) {
+      minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+    }
+    const pad = 70;
+    const scale = Math.min((W - pad * 2) / (maxX - minX), (H - pad * 2) / (maxY - minY));
+    const ox = (W - (maxX - minX) * scale) / 2 - minX * scale;
+    const oy = (H - (maxY - minY) * scale) / 2 - minY * scale;
+    return { scale, ox, oy };
+  }
+
+  function T(x, y, f) {
+    const { scale, ox, oy } = f;
+    return [x * scale + ox, y * scale + oy];
+  }
+
+  function setup() {
+    canvas = document.getElementById('panel');
+    ctx = canvas.getContext('2d');
+    hatch = makeHatchPattern();
+    resize();
+    window.addEventListener('resize', resize);
+    return { draw };
+  }
+
+  let hatch = null;
+  let lastFit = null;
+  // REN-027: 45° hatch lines, 4px pitch — occupancy is never colour alone (TEC-041)
+  function makeHatchPattern() {
+    const off = document.createElement('canvas');
+    off.width = off.height = 8;
+    const octx = off.getContext('2d');
+    octx.strokeStyle = col.BG;
+    octx.lineWidth = 1.6;
+    octx.lineCap = 'square';
+    octx.beginPath();
+    octx.moveTo(-2, 2); octx.lineTo(6, 10);
+    octx.moveTo(2, -2); octx.lineTo(10, 6);
+    octx.stroke();
+    return ctx.createPattern(off, 'repeat');
+  }
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    ctx.fillStyle = col.BG;
+    ctx.fillRect(0, 0, W, H);
+    const f = fit();
+    lastFit = f;
+
+    drawTrack(f);
+    drawRouteHighlights(f);
+    drawScaleBreaks(f);
+    drawFoulingMarks(f);
+    drawPoints(f);
+    drawTrains(f);
+    drawSignals(f);
+    drawSelection(f);
+    drawLabels(f);
+    drawBoundaryMarkers(f);
+  }
+
+  /* 3. route highlight overlay (REN-010): white for LOCKED_AND_PROVED,
+     amber ROUTE_LOCKING for LOCKING. Drawn between idle track and occupancy. */
+  function drawRouteHighlights(f) {
+    for (const rid in sim.state.routes) {
+      const rt = sim.state.routes[rid];
+      if (rt.state !== 'LOCKING' && rt.state !== 'LOCKED_AND_PROVED') continue;
+      const r = layout.route(rid);
+      const colour = rt.state === 'LOCKED_AND_PROVED' ? col.TRACK_ROUTE : col.ROUTE_LOCKING;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      for (const eid of r.edgeIds) {
+        const e = layout.getEdges().find(x => x.id === eid);
+        if (!e) continue;
+        const [x1, y1] = T(layout.node(e.from).x, layout.node(e.from).y, f);
+        const [x2, y2] = T(layout.node(e.to).x, layout.node(e.to).y, f);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+    }
+  }
+
+  /* 1. track centrelines (idle colour) + 3. occupancy overlay (red + hatch) */
+  function drawTrack(f) {
+    const occ = sim.occupiedSet();
+    ctx.lineCap = 'round';
+    for (const e of layout.getEdges()) {
+      const [x1, y1] = T(layout.node(e.from).x, layout.node(e.from).y, f);
+      const [x2, y2] = T(layout.node(e.to).x, layout.node(e.to).y, f);
+      const occupied = occ.has(e.circuitId);
+      ctx.strokeStyle = e.diverging ? '#2a3038' : col.TRACK_IDLE;
+      ctx.lineWidth = e.diverging ? 2.5 : 3;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      if (occupied) {
+        ctx.strokeStyle = col.TRACK_OCCUPIED;
+        ctx.lineWidth = 4.5;
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        if (hatch) {
+          ctx.strokeStyle = hatch;
+          ctx.lineWidth = 8;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /* 7. train bodies: thick rounded strokes along the track (REN-021) */
+  function drawTrains(f) {
+    for (const t of sim.state.trains) {
+      const pts = trains.bodyPoints(t.path, t.headDistM, t.lengthM);
+      if (pts.length < 2) continue;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = t.colour;
+      ctx.lineWidth = 9;
+      ctx.beginPath();
+      const [sx, sy] = T(pts[0][0], pts[0][1], f);
+      ctx.moveTo(sx, sy);
+      for (let i = 1; i < pts.length; i++) {
+        const [x, y] = T(pts[i][0], pts[i][1], f);
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      // train number alongside the head (REN-021)
+      const hp = trains.headPoint(t.path, t.headDistM);
+      const [hx, hy] = T(hp.x, hp.y, f);
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillStyle = col.TEXT;
+      const label = String(t.id);
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(11,14,18,0.7)';
+      ctx.fillRect(hx + 6, hy - 14, tw + 6, 14);
+      ctx.fillStyle = col.TEXT;
+      ctx.fillText(label, hx + 9, hy - 3);
+    }
+  }
+
+  /* scale-break markers where drawScale changes between neighbours */
+  function drawScaleBreaks(f) {
+    for (const n of layout.getNodes()) {
+      const ns = layout.edgesOnNode(n.id);
+      if (ns.length < 2) continue;
+      const scales = new Set(ns.map(e => e.drawScale));
+      if (scales.size < 2) continue;
+      const [x, y] = T(n.x, n.y, f);
+      ctx.strokeStyle = col.TEXT_DIM;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - 6, y - 8); ctx.lineTo(x + 6, y + 2);
+      ctx.moveTo(x - 1, y - 8); ctx.lineTo(x + 11, y + 2);
+      ctx.stroke();
+    }
+  }
+
+  /* fouling marks: white ticks across the track */
+  function drawFoulingMarks(f) {
+    for (const fm of layout.getFoulingMarks()) {
+      const e = layout.getEdges().find(x => x.id === fm.edgeId);
+      const a = layout.node(e.from), b = layout.node(e.to);
+      const len = e.lengthM;
+      const frac = fm.offsetM / len;
+      const [x, y] = T(a.x + (b.x - a.x) * frac, a.y + (b.y - a.y) * frac, f);
+      // tick perpendicular (rotate the track direction 90 deg)
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const L = Math.hypot(dx, dy) || 1;
+      const px = -dy / L * 10, py = dx / L * 10;
+      ctx.strokeStyle = col.FOULING;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - px, y - py); ctx.lineTo(x + px, y + py);
+      ctx.stroke();
+    }
+  }
+
+  /* point indicators: small dot at each point toe (DAT-052) */
+  function drawPoints(f) {
+    for (const p of layout.getPoints()) {
+      const n = layout.node(p.toeNode);
+      const [x, y] = T(n.x, n.y, f);
+      ctx.beginPath();
+      ctx.arc(x, y + 10, 3, 0, Math.PI * 2);
+      if (p.moving) {
+        const flash = Math.floor(sim.state.gameTime * 4) % 2 === 0;
+        ctx.fillStyle = flash ? col.FOULING : 'rgba(255,255,255,0.25)';
+      } else {
+        ctx.fillStyle = p.position === 'REVERSE' ? col.POINT_REVERSE : col.POINT_NORMAL;
+      }
+      ctx.fill();
+    }
+  }
+
+  /* 8. signal posts and lamps — SIG-010..015 geometry */
+  const LAMP_R = 4, LAMP_SP = 11;
+
+  // physical lamp colour by index, per SIG-010/SIG-013 geometry:
+  //   4-lamp bottom->top: RED, YELLOW, GREEN, YELLOW
+  //   3-lamp distant:     YELLOW, GREEN, YELLOW
+  function lampColor(i, nLamps) {
+    if (nLamps === 3) return i === 1 ? col.LAMP_GREEN : col.LAMP_YELLOW;
+    return i === 0 ? col.LAMP_RED : (i === 2 ? col.LAMP_GREEN : col.LAMP_YELLOW);
+  }
+
+  function drawLamp(x, y, r, lit, color) {
+    // glow (SIG-014): radial gradient, radius 2.5 x lampR, only when lit
+    if (lit) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 2.5);
+      g.addColorStop(0, color);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = lit ? color : col.LAMP_OFF;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = col.LAMP_RIM;
+    ctx.stroke();
+  }
+
+  function drawSignalHead(s, x, y, f) {
+    const nLamps = s.lampCount;
+    // lit indices from the derived aspect (SIG-012)
+    const lit = new Set(signalling.lampIndices(s.aspect, nLamps));
+    // bottom lamp (index 0) at y - 6; each higher lamp LAMP_SP above
+    const y0 = y - 6;
+    for (let i = 0; i < nLamps; i++) {
+      const ly = y0 - i * LAMP_SP;
+      drawLamp(x, ly, LAMP_R, lit.has(i), lampColor(i, nLamps));
+    }
+    // head plate backdrop
+    const topY = y0 - (nLamps - 1) * LAMP_SP - LAMP_R - 3;
+    const botY = y0 + LAMP_R + 3;
+    ctx.fillStyle = 'rgba(11,14,18,0.35)';
+    ctx.fillRect(x - LAMP_R - 3, topY, (LAMP_R + 3) * 2, botY - topY);
+
+    // calling-on lamp (REN-025): r=3, 9px below the bottom red, C plate
+    if (s.hasCallingOn) {
+      const coY = y0 + 9;
+      drawLamp(x, coY, 3, s.callingOnLit, col.LAMP_YELLOW);
+      ctx.fillStyle = '#1c232c';
+      ctx.fillRect(x - 9, coY + 3, 8, 7);
+      ctx.fillStyle = col.TEXT;
+      ctx.font = '6px ui-monospace, monospace';
+      ctx.fillText('C', x - 6, coY + 9);
+    }
+
+    // route indicator (REN-024): white numeral/letter box beside the head
+    if (s.routeIndicator != null && s.routeIndicator !== '') {
+      ctx.fillStyle = col.FOULING;
+      ctx.fillRect(x + LAMP_R + 4, y0 - 8, 9, 14);
+      ctx.fillStyle = col.BG;
+      ctx.font = 'bold 9px ui-monospace, monospace';
+      ctx.fillText(String(s.routeIndicator), x + LAMP_R + 6, y0 + 3);
+    }
+
+    // aspect text label (REN-029) — always on in these steps
+    const ab = signalling.aspectLabel(s.aspect);
+    if (ab) {
+      ctx.font = '10px ui-monospace, monospace';
+      ctx.fillStyle = col.TEXT_DIM;
+      ctx.fillText(ab, x - (LAMP_R + 12), y0 - 4);
+    }
+  }
+
+  function drawSignals(f) {
+    for (const s of layout.getSignals()) {
+      const n = layout.node(s.atNode);
+      const [x, y] = T(n.x, n.y, f);
+      const side = s.facing === 'UP' ? -1 : 1;   // post on the driver's left
+      const sx = x + side * 18;
+      // stem
+      ctx.strokeStyle = '#6b7885';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx, y - 24); ctx.stroke();
+      drawSignalHead(s, sx, y, f);
+      // plate (P for Distant) at the post base
+      if (s.plate) {
+        ctx.fillStyle = '#1c232c';
+        ctx.fillRect(sx - 8, y + 3, 9, 8);
+        ctx.fillStyle = col.TEXT;
+        ctx.font = '6px ui-monospace, monospace';
+        ctx.fillText(s.plate, sx - 5, y + 10);
+      }
+    }
+  }
+
+  /* line name labels */
+  function drawLabels(f) {
+    const lines = [
+      { name: 'LOOP 1 (PF 1)', x: 216, y: 74 },
+      { name: 'UP MAIN (PF 2)', x: 300, y: 172 },
+      { name: 'DN MAIN (PF 3)', x: 300, y: 232 },
+      { name: 'GOODS LOOP', x: 216, y: 292 },
+      { name: 'SIDING', x: 384, y: 352 },
+    ];
+    ctx.font = '12px ui-monospace, monospace';
+    for (const l of lines) {
+      const [x, y] = T(l.x, l.y, f);
+      ctx.fillStyle = col.TEXT_DIM;
+      ctx.fillText(l.name, x, y);
+    }
+    // signal IDs
+    ctx.font = '10px ui-monospace, monospace';
+    ctx.fillStyle = col.TEXT_DIM;
+    for (const s of layout.getSignals()) {
+      const n = layout.node(s.atNode);
+      const [x, y] = T(n.x, n.y, f);
+      ctx.fillText(s.id, x - 30, y - 6);
+    }
+  }
+
+  /* boundary + buffer markers */
+  function drawBoundaryMarkers(f) {
+    for (const n of layout.getNodes()) {
+      const [x, y] = T(n.x, n.y, f);
+      if (n.kind === 'BOUNDARY') {
+        ctx.strokeStyle = col.TEXT_DIM;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y - 12); ctx.lineTo(x, y + 12);
+        ctx.moveTo(x - 4, y - 12); ctx.lineTo(x - 4, y + 12);
+        ctx.stroke();
+      } else if (n.kind === 'BUFFER') {
+        ctx.fillStyle = col.FOULING;
+        ctx.fillRect(x - 2, y - 6, 4, 12);
+        ctx.strokeStyle = col.FOULING;
+        ctx.beginPath(); ctx.moveTo(x + 2, y - 6); ctx.lineTo(x + 8, y); ctx.lineTo(x + 2, y + 6); ctx.stroke();
+      }
+    }
+  }
+
+  /* route-origin selection: highlight the chosen signal and its valid
+     destinations (INP-002: valid destinations flash amber) */
+  function drawSelection(f) {
+    const sel = input ? input.getSelection() : null;
+    if (!sel) return;
+    const s = layout.signal(sel.signalId);
+    if (!s) return;
+    const n = layout.node(s.atNode);
+    const [x, y] = T(n.x, n.y, f);
+    const side = s.facing === 'UP' ? -1 : 1;
+    const sx = x + side * 18;
+
+    // origin signal ring
+    ctx.strokeStyle = col.ROUTE_LOCKING;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx, y - 8, 16, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // valid destination circuits from this signal
+    const valid = new Set();
+    for (const r of layout.getRoutes())
+      if (r.fromSignal === sel.signalId) valid.add(r.toBerth);
+    if (valid.size && Math.floor(sim.state.gameTime * 2) % 2 === 0) {
+      ctx.strokeStyle = col.ROUTE_LOCKING;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      for (const cid of valid) {
+        const tc = layout.getCircuits().find(c => c.id === cid);
+        if (!tc) continue;
+        for (const eid of tc.edgeIds) {
+          const e = layout.getEdges().find(x => x.id === eid);
+          if (!e) continue;
+          const [x1, y1] = T(layout.node(e.from).x, layout.node(e.from).y, f);
+          const [x2, y2] = T(layout.node(e.to).x, layout.node(e.to).y, f);
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  /* ---- screen-space hit testing (INP-009: padded 24px signal hitbox) ---- */
+  function screenToSim(px, py) {
+    if (!lastFit) return null;
+    const { scale, ox, oy } = lastFit;
+    return { x: (px - ox) / scale, y: (py - oy) / scale };
+  }
+
+  // nearest signal post within `pad` screen px of (px,py) -> signal or null
+  function hitSignal(px, py) {
+    if (!lastFit) return null;
+    let best = null, bestD = Infinity;
+    for (const s of layout.getSignals()) {
+      const n = layout.node(s.atNode);
+      const side = s.facing === 'UP' ? -1 : 1;
+      const [sx, sy] = T(n.x + side * (18 / lastFit.scale), n.y, lastFit);
+      const d = Math.hypot(px - sx, py - sy);
+      if (d < 24 && d < bestD) { best = s.id; bestD = d; }
+    }
+    return best;
+  }
+
+  // nearest edge within ~8 screen px -> { edgeId, circuitId } or null
+  function hitEdge(px, py) {
+    if (!lastFit) return null;
+    let best = null, bestD = Infinity;
+    for (const e of layout.getEdges()) {
+      const a = layout.node(e.from), b = layout.node(e.to);
+      const [ax, ay] = T(a.x, a.y, lastFit);
+      const [bx, by] = T(b.x, b.y, lastFit);
+      const d = distToSegment(px, py, ax, ay, bx, by);
+      if (d < 8 && d < bestD) { best = e; bestD = d; }
+    }
+    return best;
+  }
+
+  // nearest point toe within 14 px -> point or null
+  function hitPoint(px, py) {
+    if (!lastFit) return null;
+    let best = null, bestD = Infinity;
+    for (const p of layout.getPoints()) {
+      const n = layout.node(p.toeNode);
+      const [x, y] = T(n.x, n.y + 10, lastFit);
+      const d = Math.hypot(px - x, py - y);
+      if (d < 14 && d < bestD) { best = p; bestD = d; }
+    }
+    return best;
+  }
+
+  function distToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    if (!l2) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  return { setup, draw, screenToSim, hitSignal, hitEdge, hitPoint };
+})();
+
+/* ----------------------------------------------------------------------------
+   10. ui — message strip (UI-040, ILK-022) and refusals that persist 6 s
+   ------------------------------------------------------------------------- */
+const ui = (function () {
+  let el = null, timer = null;
+
+  function setup() {
+    el = document.getElementById('messagestrip');
+  }
+
+  function showMessage(text, isError) {
+    if (!el) return;
+    el.textContent = text;
+    el.className = isError ? 'err' : 'ok';
+    el.style.opacity = '1';
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { el.style.opacity = '0'; }, CONST.MSG_STRIP_S * 1000);
+  }
+
+  return { setup, showMessage };
+})();
+
+/* ----------------------------------------------------------------------------
+   11. input — click signal → route origin; click destination → set route;
+   right-click signal → cancel; shift-click point → throw (INP-001..006)
+   ------------------------------------------------------------------------- */
+const input = (function () {
+  let selection = null;  // { signalId } — route origin mode
+
+  function getSelection() { return selection; }
+
+  function setup() {
+    const canvas = document.getElementById('panel');
+    canvas.addEventListener('click', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const px = e.clientX - r.left, py = e.clientY - r.top;
+      const sig = render.hitSignal(px, py);
+      if (sig) { clickSignal(sig); return; }
+      const edge = render.hitEdge(px, py);
+      if (selection && edge) { clickDestination(edge); return; }
+      const pt = render.hitPoint(px, py);
+      if (pt) { clickPoint(pt.id); return; }
+      if (selection) { selection = null; render.draw(); }
+    });
+
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      const px = e.clientX - r.left, py = e.clientY - r.top;
+      const sig = render.hitSignal(px, py);
+      if (sig) cancelSignalRoute(sig);
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && selection) { selection = null; render.draw(); }
+    });
+  }
+
+  function clickSignal(sigId) {
+    // cycle: if a route is already set from this signal, re-clicking does nothing
+    // destructive; instead it re-enters origin mode (player may cancel via right-click)
+    selection = { signalId: sigId };
+    render.draw();
+  }
+
+  function clickDestination(edge) {
+    const from = selection.signalId;
+    const to = edge.circuitId;
+    const route = layout.getRoutes().find(r => r.fromSignal === from && r.toBerth === to);
+    if (!route) {
+      ui.showMessage('NO ROUTE — ' + from + ' to ' + to + ' is not a valid road', true);
+      selection = null; render.draw();
+      return;
+    }
+    const res = sim.requestRoute(route.id);
+    if (res.ok) {
+      ui.showMessage('ROUTE SET — ' + from + ' → ' + route.toBerth + ' (points locking)', false);
+    } else {
+      ui.showMessage(res.message, true);
+    }
+    selection = null;
+    render.draw();
+  }
+
+  function cancelSignalRoute(sigId) {
+    let found = null;
+    for (const rid in sim.state.routes) {
+      const rt = sim.state.routes[rid];
+      if (rt.signalId === sigId && rt.state !== 'IDLE') { found = rid; break; }
+    }
+    if (!found) {
+      ui.showMessage('No route is set from ' + sigId, true);
+      return;
+    }
+    const res = sim.cancelRoute(found);
+    if (res.ok) ui.showMessage(res.message || ('ROUTE CANCELLED — ' + sigId), res.approachLocked);
+    else ui.showMessage(res.message, true);
+    render.draw();
+  }
+
+  function clickPoint(pid) {
+    const p = layout.point(pid);
+    const target = p.position === 'NORMAL' ? 'REVERSE' : 'NORMAL';
+    const res = sim.throwPoint(pid, target);
+    if (res.ok) ui.showMessage('POINT ' + pid + ' → ' + target, false);
+    else ui.showMessage(res.message, true);
+    render.draw();
+  }
+
+  return { setup, getSelection };
+})();
+
+/* ----------------------------------------------------------------------------
+   Boot — validate the layout and draw
+   ------------------------------------------------------------------------- */
+(function boot() {
+  const errors = layout.validate();
+  const status = document.getElementById('statusbar');
+  if (errors.length) {
+    status.textContent = 'LAYOUT VALIDATION FAILED — ' + errors.length + ' errors (see console)';
+    status.style.color = '#ff3b30';
+    console.error(errors);
+  } else {
+    status.textContent = 'LAYOUT VALID — ' + layout.getNodes().length + ' nodes, ' +
+      layout.getEdges().length + ' edges, ' + layout.getCircuits().length + ' circuits, ' +
+      layout.getPoints().length + ' points, ' + layout.getSignals().length + ' signals, ' +
+      layout.getRoutes().length + ' routes  ·  conflicts: ' + Object.values(layout.buildConflictTable()).reduce((a, b) => a + b.length, 0) + ' pairs';
+    status.style.color = '#2fd05a';
+  }
+
+  // ---- self-tests first: they reset sim, so run before the demo state ----
+  const tResults = tests.run();
+  const tPass = tResults.filter(r => r.pass).length;
+  console.log('[tests] ' + tPass + '/' + tResults.length + ' passed', tResults);
+  status.textContent += '  ·  tests: ' + tPass + '/' + tResults.length;
+
+  // ---- STEP 2: one hand-placed train + debug slider -------------------------
+  const UP_PATH = ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4'];
+  const PATH_M = trains.pathLength(UP_PATH);
+
+  sim.reset(12345);
+  sim.addTrain({
+    id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI',
+    direction: 'UP', path: UP_PATH, headDistM: 0,
+  });
+
+  ui.setup();
+  input.setup();
+  render.setup();
+
+  // ---- STEP 5: live aspect derivation (SIG-040). The demo sets a reception
+  // route so the player immediately sees H1 step up from RED to YELLOW as the
+  // points prove; dragging the debug train in then drops it back to RED. ----
+  // grant Line Clear on both blocks so Advanced Starter routes can clear
+  sim.state.blocks['BLOCK EAST'] = 'LINE_CLEAR_GRANTED';
+  sim.state.blocks['BLOCK WEST'] = 'LINE_CLEAR_GRANTED';
+  const demo = sim.requestRoute('R_H1_PF2');
+  if (demo.ok) ui.showMessage('DEMO — reception to PF2 set; drag the train, set more routes', false);
+  else ui.showMessage('DEMO — ' + demo.message, true);
+  signalling.computeAspects(sim.st());
+
+  const slider = document.getElementById('trainSlider');
+  const headInfo = document.getElementById('headinfo');
+  const occInfo = document.getElementById('occinfo');
+
+  function updateDebugTrain() {
+    sim.state.trains[0].headDistM = Number(slider.value);
+    sim.updateOccupancy();
+    const t = sim.state.trains[0];
+    const hp = trains.headPoint(t.path, t.headDistM);
+    const kmh = Math.round(t.speedMps * 3.6);
+    headInfo.textContent = 'head ' + t.headDistM.toFixed(0) + ' m @ ' + hp.edgeId + ' +' + hp.offsetM.toFixed(0) + ' m · ' + kmh + ' km/h';
+    occInfo.textContent = 'circuits: ' + (t.occupiedCircuits.length ? t.occupiedCircuits.join(' ') : '—');
+    render.draw();
+  }
+
+  slider.addEventListener('input', updateDebugTrain);
+  updateDebugTrain();
+
+  // ---- game loop: tick the sim and re-derive aspects live ----
+  function gameLoop() {
+    sim.tick();
+    render.draw();
+    requestAnimationFrame(gameLoop);
+  }
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
