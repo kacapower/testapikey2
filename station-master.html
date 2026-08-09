@@ -60,6 +60,23 @@
   #debugpanel input[type=range] { flex: 1; accent-color: #ff3b30; }
   #debugpanel .occ { color: #ff3b30; white-space: nowrap; }
   #debugpanel .head { color: #1f9c9c; white-space: nowrap; }
+  #blockpanel {
+    position: absolute; top: 12px; right: 12px;
+    padding: 8px 10px; border: 1px solid #1c232c; border-radius: 6px;
+    background: rgba(11,14,18,0.9); font-size: 11px; color: #6b7885;
+    z-index: 5; display: flex; flex-direction: column; gap: 6px; min-width: 250px;
+  }
+  #blockpanel .row { display: flex; align-items: center; gap: 6px; }
+  #blockpanel .bname { color: #c9d4e0; white-space: nowrap; }
+  #blockpanel .bstate { flex: 1; text-align: center; white-space: nowrap; }
+  #blockpanel .bstate.granted { color: #2fd05a; }
+  #blockpanel .bstate.asked { color: #ffb020; }
+  #blockpanel .bstate.online { color: #ff3b30; }
+  #blockpanel button {
+    background: #14181e; color: #c9d4e0; border: 1px solid #2a3038;
+    border-radius: 4px; font-size: 10px; padding: 2px 6px; cursor: pointer;
+  }
+  #blockpanel button:hover { border-color: #ffb020; color: #ffb020; }
 </style>
 </head>
 <body>
@@ -68,7 +85,7 @@
   <div id="hud">
     <span class="clock">10:00:00</span>
     <span class="title">KHARGAON JN — Station Master</span>
-    <span class="stage">STEP 6 · TRAIN MOVEMENT — braking distance is real</span>
+    <span class="stage">STEP 7 · SECTIONAL RELEASE / APPROACH LOCK / BLOCK WORKING</span>
     <span class="speed" id="speedrow">
       <button id="spd0" title="pause">⏸</button>
       <button id="spd1" class="on" title="1×">1</button>
@@ -81,6 +98,7 @@
   <div id="helpbar">
     click a signal → click a line to set a route<br>
     right-click signal = cancel route · shift-click a point = throw it<br>
+    block panel: Ask = line clear for departure · Grant = accept an inbound train<br>
     space = pause · 1 / 2 / 5 = sim speed · Esc = clear selection
   </div>
   <div id="debugpanel">
@@ -91,6 +109,20 @@
     <div class="row">
       <span id="siginfo" class="occ">…</span>
       <span id="occsum" class="occ">circuits: —</span>
+    </div>
+  </div>
+  <div id="blockpanel">
+    <div class="row">
+      <span class="bname">BLOCK EAST</span>
+      <span class="bstate" id="beast-state">LINE CLOSED</span>
+      <button id="beast-ask" title="Ask the neighbour for Line Clear">Ask</button>
+      <button id="beast-grant" title="Grant the neighbour's inbound request">Grant</button>
+    </div>
+    <div class="row">
+      <span class="bname">BLOCK WEST</span>
+      <span class="bstate" id="bwest-state">LINE CLOSED</span>
+      <button id="bwest-ask" title="Ask the neighbour for Line Clear">Ask</button>
+      <button id="bwest-grant" title="Grant the neighbour's inbound request">Grant</button>
     </div>
   </div>
 </div>
@@ -118,6 +150,7 @@ const CONST = {
   SHUNT_KPH: 15,
   REACTION_S: 3,
   LINE_CLEAR_REPLY_S: [2, 8],
+  TRANSIT_S: 60,
   DEADLOCK_SCAN_S: 5,
   ACCEL:      { PAX: 0.5,  GOODS: 0.25 },
   BRAKE_SVC:  { PAX: 0.7,  GOODS: 0.35 },
@@ -627,6 +660,8 @@ const interlock = (function () {
     const r = st.routeDef(routeId);
     if (!r) return refuse('NO_SUCH_ROUTE', 'NO ROUTE — this road is not defined');
     const cur = st.route(routeId);
+    if (cur && cur.state === S.APPROACH_LOCKED)
+      return refuse('APPROACH_LOCKED', 'ROUTE LOCKED — approach locking, ' + Math.ceil(cur.approachLockS) + ' s remaining');
     if (cur && cur.state !== S.IDLE)
       return refuse('ALREADY_SET', 'ROUTE ALREADY SET — ' + r.fromSignal + ' → ' + r.toBerth);
 
@@ -730,6 +765,9 @@ const interlock = (function () {
     }
     releasePoints(routeId, st);
     cur.state = S.IDLE;
+    cur.released = [];
+    cur.overlapHeld = true;
+    cur.trainId = null;
     return ok();
   }
 
@@ -1035,6 +1073,24 @@ const motion = (function () {
     return map;
   }
 
+  // node id -> distance from the start of a train path, cached per path.
+  // Used by sectional release to find where each circuit's far end sits.
+  function nodePositions(path) {
+    const key = 'N' + path.join('>');
+    const hit = posCache.get(key);
+    if (hit) return hit;
+    const map = {};
+    let acc = 0;
+    for (const eid of path) {
+      const e = trains.edge(eid);
+      if (!(e.from in map)) map[e.from] = acc;
+      map[e.to] = acc + e.lengthM;
+      acc += e.lengthM;
+    }
+    posCache.set(key, map);
+    return map;
+  }
+
   // nearest signal ahead of the head, with distance in metres (TRN-030)
   function nearestSignalAhead(path, headDist) {
     const map = signalPositions(path);
@@ -1083,13 +1139,21 @@ const motion = (function () {
     const ns = nearestSignalAhead(path, headDist);
     if (!ns) return lineSpeed(train, path, headDist);
 
+    if (ns.aspect !== 'RED') train.brakingForRed = false;
+
     switch (ns.aspect) {
       case 'RED':
-        if (train.callingOnAuthority) return mps(CONST.CALL_ON_SPEED_KPH);
-        { const b = brakeCurve(train, ns.distM, 0);
-          // never accelerate at a Red: track the brake curve down to v=0 and
-          // stop AT the signal (min with current speed = coast until needed)
-          return Math.max(0, Math.min(b, train.speedMps)); }
+        if (train.callingOnAuthority) { train.brakingForRed = false; return mps(CONST.CALL_ON_SPEED_KPH); }
+        { // never accelerate at a Red. Coast at the current speed until within
+          // stopping distance (TRN-023: physical stop + REACTION_S reaction),
+          // then brake to a stand short of the signal. Once committed to
+          // braking, stay committed (otherwise the shrinking threshold makes
+          // the train creep asymptotically instead of stopping).
+          const stopDist = train.speedMps * train.speedMps / (2 * train.brakeSvc)
+            + CONST.REACTION_S * train.speedMps + 0.5;
+          if (ns.distM <= stopDist) { train.brakingForRed = true; return 0; }
+          if (train.brakingForRed) return 0;
+          return train.speedMps; }
       case 'YELLOW': {
         const after = signalAfter(ns.id);
         const dNext = after ? ns.distM + distanceBetween(path, ns.id, after.id) : ns.distM + 10000;
@@ -1114,7 +1178,7 @@ const motion = (function () {
     return out;
   }
 
-  return { kph, mps, signalPositions, nearestSignalAhead, signalAfter,
+  return { kph, mps, signalPositions, nodePositions, nearestSignalAhead, signalAfter,
            distanceBetween, brakeCurve, lineSpeed, targetSpeed, crossedSignals };
 })();
 
@@ -1168,9 +1232,13 @@ const sim = (function () {
     state.hazards = [];
     state.frozen = false;
     state.blocks = { 'BLOCK EAST': 'LINE_CLOSED', 'BLOCK WEST': 'LINE_CLOSED' };
-    // route runtime states keyed by route id (ILK-010)
+    state.blockTimers = { 'BLOCK EAST': { askTimerS: 0, arrivalTimerS: 0 }, 'BLOCK WEST': { askTimerS: 0, arrivalTimerS: 0 } };
+    // route runtime states keyed by route id (ILK-010); released[]/overlapHeld
+    // drive sectional release (ILK-060/064) and live conflict checking
     state.routes = {};
-    for (const r of layout.getRoutes()) state.routes[r.id] = { state: 'IDLE', approachLockS: 0, signalId: r.fromSignal };
+    for (const r of layout.getRoutes()) state.routes[r.id] = {
+      state: 'IDLE', approachLockS: 0, signalId: r.fromSignal, released: [], overlapHeld: true, trainId: null,
+    };
     // point runtime state fully restored (T12/T13 depend on clean state per test)
     for (const p of layout.getPoints()) {
       const def = defaultPointPos[p.id] || 'NORMAL';
@@ -1196,11 +1264,26 @@ const sim = (function () {
         }
         return null;
       },
-      conflictsWith: (id) => layout.buildConflictTable()[id] || [],
+      conflictsWith: (id) => {
+        // ILK-040/041 live conflict: an overlap conflict only bites while the
+        // other route still HELD its overlap. Once a train stands in the berth
+        // (or passed clear), the overlap is released and the next route may set.
+        const def = layout.route(id);
+        if (!def) return [];
+        const out = [];
+        for (const rid in state.routes) {
+          if (rid === id) continue;
+          const rt = state.routes[rid];
+          if (rt.state === 'IDLE') continue;
+          if (liveConflict(def, layout.route(rid), rt.overlapHeld !== false)) out.push(rid);
+        }
+        return out;
+      },
       occupied: (c) => occ.has(c),
       point: (id) => layout.point(id),
       routeEndsAtBuffer: (id) => layout.routeEndsAtBuffer(layout.route(id)),
       signal: (id) => layout.signal(id),
+      blockState: (b) => state.blocks[b] || 'LINE_CLOSED',
       lineClearGranted: (sig) => state.blocks[layout.signalBlockName(sig)] === 'LINE_CLEAR_GRANTED',
       blockFor: (sig) => layout.signalBlockName(sig),
       circuitFailed: (c) => state.failedCircuits.has(c),
@@ -1213,8 +1296,22 @@ const sim = (function () {
         return state.trains.find(t => t.occupiedCircuits.indexOf(ac) !== -1) || null;
       },
       trainApproaching: (signalId) => {
+        // ILK-050: in the approach-locking berth OR within braking distance at
+        // the current speed, whichever is greater. Braking distance includes
+        // REACTION_S — the same number that makes a late cancellation lethal.
         const ac = layout.signalApproachCircuit[signalId];
-        return ac ? occ.has(ac) : false;
+        if (ac && occ.has(ac)) return true;
+        for (const t of state.trains) {
+          if (t.despawned) continue;
+          const map = motion.signalPositions(t.path);
+          if (!(signalId in map)) continue;
+          const d = map[signalId] - t.headDistM;
+          if (d > 1e-6) {
+            const stop = t.speedMps * t.speedMps / (2 * t.brakeSvc) + CONST.REACTION_S * t.speedMps;
+            if (d <= stop) return true;
+          }
+        }
+        return false;
       },
     };
   }
@@ -1245,6 +1342,7 @@ const sim = (function () {
       targetSpeedMps: 0,
       state: 'STOPPED',
       callingOnAuthority: false,
+      brakingForRed: false,
       despawned: false,
       occupiedCircuits: [],
     });
@@ -1285,6 +1383,9 @@ const sim = (function () {
         if (r.approachLockS <= 0) {
           interlock.releasePoints(rid, st());
           r.state = 'IDLE';
+          r.released = [];
+          r.overlapHeld = true;
+          r.trainId = null;
         }
       }
     }
@@ -1297,24 +1398,186 @@ const sim = (function () {
   function tick() {
     if (state.frozen) return;
     consumeIntents();      // 1. step 8: player intent queue (no-op until then)
-    tickTimers();          // 2. point swing, route locking, approach lock
+    tickTimers();          // 2. point swing, route locking, approach lock, block instruments
     signalling.computeAspects(st());   // 3. derive every aspect
     driveTrains();         // 4. each driver sets target speed
     moveTrains();          // 5. integrate physics
     updateOccupancy();     // 6. recompute circuit occupancy from extents
-    sectionalRelease();    // 7. step 7: release route segments behind trains
-    detectHazards();       // 8. SPAD / collision / derailment / deadlock
-    updateScoring();       // 9. step 8: delay / throughput accumulators
-    advanceClock();        // 10. gameTime += DT
+    updateBlocks();        // 7. BLK-021: trains crossing AS signals flip the instrument
+    sectionalRelease();    // 8. step 7: release route segments behind trains
+    detectHazards();       // 9. SPAD / collision / derailment / deadlock
+    updateScoring();       // 10. step 8: delay / throughput accumulators
+    advanceClock();        // 11. gameTime += DT
   }
 
   function consumeIntents() {}        // step 8 (SIM-030)
-  function sectionalRelease() {}      // step 7 (ILK-060)
   function updateScoring() {}         // step 8 (SCO-010)
 
-  function tickTimers() { tickPoints(); tickRoutes(); }
+  function tickTimers() {
+    tickPoints();
+    tickRoutes();
+    tickBlocks();
+  }
 
   function advanceClock() { state.gameTime += CONST.DT; }
+
+  /* ILK-050..054 conflict test: two route DEFINITIONS collide if they share a
+     route circuit, or if one's still-held overlap reaches the other's route or
+     overlap. Released overlaps do not conflict (that is what lets a train stand
+     in the berth and still get its departure road). */
+  function liveConflict(a, b, bOverlapHeld) {
+    const has = (arr, x) => arr.indexOf(x) !== -1;
+    for (const c of a.circuitIds) if (has(b.circuitIds, c)) return true;
+    for (const c of a.overlapCircuitIds) if (has(b.circuitIds, c)) return true;
+    if (bOverlapHeld) {
+      for (const c of a.circuitIds) if (has(b.overlapCircuitIds, c)) return true;
+      for (const c of a.overlapCircuitIds) if (has(b.overlapCircuitIds, c)) return true;
+    }
+    for (const [pid, pos] of Object.entries(a.pointSettings))
+      if (b.pointSettings[pid] && b.pointSettings[pid] !== pos) return true;
+    return false;
+  }
+
+  /* distance from a train-path start to the far end of each circuit in a
+     route (the `to` node of the route's last edge on that circuit) */
+  function circuitFarEndDist(def, path) {
+    const nodePos = motion.nodePositions(path);
+    const out = {};
+    for (const eid of def.edgeIds) {
+      const e = trains.edge(eid);
+      const to = nodePos[e.to];
+      if (to !== undefined) out[e.circuitId] = to;
+    }
+    return out;
+  }
+
+  /* ILK-060..064: sectional route release. The route's circuits release one by
+     one, in order, each only after the train's TAIL has cleared its far end
+     (ILK-063 — the release follows the train, never the clock). The berth
+     holds until departure (ILK-064). The overlap holds until the train has
+     come to a stand in the berth or passed clear (ILK-041), which is what
+     unlocks the departure road for a train standing at the platform. */
+  function sectionalRelease() {
+    for (const rid in state.routes) {
+      const rt = state.routes[rid];
+      if (rt.state !== 'LOCKED_AND_PROVED' && rt.state !== 'OCCUPIED') continue;
+      const def = layout.route(rid);
+      if (!def) continue;
+      // the train that entered this route (or the one currently on it) — once
+      // its tail clears the last circuit it no longer occupies any route
+      // circuit, so the entered-train id is what lets us finish the release.
+      let train = state.trains.find(t => !t.despawned && t.occupiedCircuits.some(c => def.circuitIds.indexOf(c) !== -1));
+      if (train && rt.state === 'LOCKED_AND_PROVED') rt.trainId = train.id;
+      if (!train && rt.trainId != null)
+        train = state.trains.find(t => t.id === rt.trainId) || null;
+      if (!train) continue;                                   // route set, nothing on it yet
+
+      if (rt.state === 'LOCKED_AND_PROVED') rt.state = 'OCCUPIED';
+
+      // a despawned train has left the modelled world: the route is complete
+      if (train.despawned) {
+        interlock.releasePoints(rid, st());
+        rt.state = 'IDLE';
+        rt.released = [];
+        rt.overlapHeld = true;
+        rt.trainId = null;
+        continue;
+      }
+
+      const farEnd = circuitFarEndDist(def, train.path);
+      const tail = train.headDistM - train.lengthM;
+
+      for (const c of def.circuitIds) {
+        if (rt.released.indexOf(c) !== -1) continue;
+        const end = farEnd[c];
+        if (end !== undefined && tail >= end - 0.001) {
+          rt.released.push(c);
+          for (const p of layout.getPoints())
+            if (p.circuitId === c && p.lockedBy === rid) p.lockedBy = null;
+        }
+      }
+
+      const lastCircuit = def.circuitIds[def.circuitIds.length - 1];
+      const inBerth = train.occupiedCircuits.indexOf(lastCircuit) !== -1;
+      const headPast = farEnd[lastCircuit] !== undefined && train.headDistM > farEnd[lastCircuit];
+      if (rt.overlapHeld && (inBerth && train.speedMps < 0.05 || headPast))
+        rt.overlapHeld = false;
+
+      if (def.circuitIds.every(c => rt.released.indexOf(c) !== -1)) {
+        interlock.releasePoints(rid, st());
+        rt.state = 'IDLE';
+        rt.released = [];
+        rt.overlapHeld = true;
+        rt.trainId = null;
+      }
+    }
+  }
+
+  /* BLK-021: the block instrument tracks trains crossing the Advanced Starter
+     (departing -> TRAIN_ON_LINE, then TRAIN_ARRIVED/LINE_CLOSED after transit)
+     and trains crossing the Outer into the station (arrival clears the block). */
+  function updateBlocks() {
+    for (const t of state.trains) {
+      if (t.despawned) continue;
+      const crossed = motion.crossedSignals(t.path, t.prevHeadDistM, t.headDistM);
+      for (const c of crossed) {
+        if (c.id === 'AS1') {
+          if (state.blocks['BLOCK EAST'] === 'LINE_CLEAR_GRANTED' || state.blocks['BLOCK EAST'] === 'LINE_CLEAR_ASKED')
+            state.blocks['BLOCK EAST'] = 'TRAIN_ON_LINE';
+          state.blockTimers['BLOCK EAST'].arrivalTimerS = CONST.TRANSIT_S;
+        } else if (c.id === 'AS2') {
+          if (state.blocks['BLOCK WEST'] === 'LINE_CLEAR_GRANTED' || state.blocks['BLOCK WEST'] === 'LINE_CLEAR_ASKED')
+            state.blocks['BLOCK WEST'] = 'TRAIN_ON_LINE';
+          state.blockTimers['BLOCK WEST'].arrivalTimerS = CONST.TRANSIT_S;
+        } else if (c.id === 'O1') {
+          if (state.blocks['BLOCK WEST'] === 'LINE_CLEAR_GRANTED' || state.blocks['BLOCK WEST'] === 'LINE_CLEAR_ASKED')
+            state.blocks['BLOCK WEST'] = 'LINE_CLOSED';       // train has arrived at us
+        } else if (c.id === 'O2') {
+          if (state.blocks['BLOCK EAST'] === 'LINE_CLEAR_GRANTED' || state.blocks['BLOCK EAST'] === 'LINE_CLEAR_ASKED')
+            state.blocks['BLOCK EAST'] = 'LINE_CLOSED';
+        }
+      }
+    }
+    for (const b of ['BLOCK EAST', 'BLOCK WEST']) {
+      if (state.blocks[b] === 'TRAIN_ON_LINE') {
+        state.blockTimers[b].arrivalTimerS -= CONST.DT;
+        if (state.blockTimers[b].arrivalTimerS <= 0) state.blocks[b] = 'LINE_CLOSED';
+      }
+    }
+  }
+
+  /* block instrument timers (BLK-010): the neighbour replies after a seeded
+     random delay, granting by default in this single-station build. */
+  function tickBlocks() {
+    for (const b of ['BLOCK EAST', 'BLOCK WEST']) {
+      const tm = state.blockTimers[b];
+      if (state.blocks[b] === 'LINE_CLEAR_ASKED' && tm.askTimerS > 0) {
+        tm.askTimerS -= CONST.DT;
+        if (tm.askTimerS <= 0) state.blocks[b] = 'LINE_CLEAR_GRANTED';
+      }
+    }
+  }
+
+  /* BLK-001..011: ask the neighbour station for Line Clear (absolute block —
+     refused while TRAIN_ON_LINE), and grant a neighbour's inbound request. */
+  function askLineClear(blockName) {
+    const cur = state.blocks[blockName];
+    if (cur === 'TRAIN_ON_LINE') return { ok: false, code: 'BLOCK_OCCUPIED', message: 'LINE CLEAR REFUSED — ' + blockName + ' is occupied (TRAIN ON LINE)' };
+    if (cur === 'LINE_CLEAR_ASKED') return { ok: false, code: 'ALREADY_ASKED', message: 'LINE CLEAR ALREADY ASKED — ' + blockName };
+    if (cur === 'LINE_CLEAR_GRANTED') return { ok: false, code: 'ALREADY_GRANTED', message: blockName + ' already has LINE CLEAR' };
+    state.blocks[blockName] = 'LINE_CLEAR_ASKED';
+    const lo = CONST.LINE_CLEAR_REPLY_S[0], hi = CONST.LINE_CLEAR_REPLY_S[1];
+    state.blockTimers[blockName].askTimerS = lo + state.rng() * (hi - lo);
+    return { ok: true, message: blockName + ' — LINE CLEAR ASKED, awaiting reply' };
+  }
+
+  function grantLineClear(blockName) {
+    if (state.blocks[blockName] !== 'LINE_CLEAR_ASKED')
+      return { ok: false, code: 'NO_REQUEST', message: 'No outstanding request for ' + blockName };
+    state.blocks[blockName] = 'LINE_CLEAR_GRANTED';
+    state.blockTimers[blockName].askTimerS = 0;
+    return { ok: true, message: blockName + ' — LINE CLEAR GRANTED' };
+  }
 
   /* TRN-020..026: semi-implicit Euler. Drive speed toward the driver's target
      (accelerate at ACCEL, brake at BRAKE_SVC), clamp v >= 0. A train CANNOT
@@ -1364,6 +1627,7 @@ const sim = (function () {
   return {
     state, reset, addTrain, updateOccupancy, occupiedSet, tick,
     requestRoute, cancelRoute, throwPoint, st,
+    askLineClear, grantLineClear, blockState: (b) => state.blocks[b],
   };
 })();
 
@@ -1596,6 +1860,92 @@ const tests = (function () {
         /651/.test(res.message) && /620/.test(res.message);
     });
 
+    // ---- STEP 7: approach locking, sectional release, block working ----
+    check('T15 approach locking (120 s, route unusable)', () => {
+      sim.reset(1515);
+      sim.addTrain({ id: 7, name: 'T', class: 'RAJDHANI', direction: 'UP',
+        path: ['E_O1_H1', 'E_H1_P101N', 'E_UM1'], headDistM: 700 });   // on TC_BH1, 100 m before H1
+      const set = sim.requestRoute('R_H1_PF2');
+      for (let i = 0; i < 10 && sim.state.routes['R_H1_PF2'].state !== 'LOCKED_AND_PROVED'; i++) sim.tick();
+      const res = sim.cancelRoute('R_H1_PF2');
+      const rt = sim.state.routes['R_H1_PF2'];
+      const refused = sim.requestRoute('R_H1_PF2');                    // still approach-locked
+      return set.ok && res.ok && res.approachLocked &&
+        rt.state === 'APPROACH_LOCKED' && rt.approachLockS > 119 &&
+        layout.point('P101').lockedBy === 'R_H1_PF2' &&                 // points held the full timer
+        !refused.ok && refused.code === 'APPROACH_LOCKED';
+    });
+    check('T16 no approach lock when nothing approaching', () => {
+      sim.reset(1616);
+      const set = sim.requestRoute('R_H1_PF2');
+      for (let i = 0; i < 10 && sim.state.routes['R_H1_PF2'].state !== 'LOCKED_AND_PROVED'; i++) sim.tick();
+      const res = sim.cancelRoute('R_H1_PF2');
+      return set.ok && res.ok && !res.approachLocked &&
+        sim.state.routes['R_H1_PF2'].state === 'IDLE' &&
+        layout.point('P101').lockedBy === null;
+    });
+    check('T17 sectional release: in order, only after the tail clears', () => {
+      sim.reset(1717);
+      const set = sim.requestRoute('R_H1_PF2');                        // 5 circuits TC_P101..TC_UM4
+      for (let i = 0; i < 10 && sim.state.routes['R_H1_PF2'].state !== 'LOCKED_AND_PROVED'; i++) sim.tick();
+      sim.addTrain({ id: 9, name: 'T', class: 'LIGHT_ENG', direction: 'UP',
+        path: ['E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4', 'E_UM5'], headDistM: 0, speedMps: 10 });
+      const farEnd = { TC_P101: 212, TC_UM1: 340, TC_UM2: 480, TC_UM3: 640, TC_UM4: 800 };
+      const order = ['TC_P101', 'TC_UM1', 'TC_UM2', 'TC_UM3', 'TC_UM4'];
+      const released = [];
+      let ok = true;
+      for (let i = 0; i < 5500; i++) {
+        sim.tick();
+        const rt = sim.state.routes['R_H1_PF2'];
+        if (rt.state === 'IDLE') break;
+        for (const c of rt.released) {
+          if (released.indexOf(c) !== -1) continue;
+          released.push(c);
+          const t = sim.state.trains[0];
+          if (t.headDistM - t.lengthM < farEnd[c] - 0.01) ok = false;  // released before tail cleared
+        }
+      }
+      const orderOk = released.every((c, i) => c === order[i]);
+      const t = sim.state.trains[0];
+      const atStand = t.speedMps < 0.05 && t.occupiedCircuits.indexOf('TC_UM4') !== -1;
+      const berthHeld = sim.state.routes['R_H1_PF2'].state === 'OCCUPIED' &&
+        sim.state.routes['R_H1_PF2'].released.indexOf('TC_UM4') === -1;
+      // standing in the berth has released the overlap -> the departure road fits
+      const dep = sim.requestRoute('R_S2_AS1');
+      for (let i = 0; i < 2000 && sim.state.routes['R_H1_PF2'].state !== 'IDLE'; i++) sim.tick();
+      const completed = sim.state.routes['R_H1_PF2'].state === 'IDLE';
+      return set.ok && ok && orderOk && released.length === 4 && atStand &&
+        berthHeld && dep.ok && completed;
+    });
+    check('T18 signal drops behind the passing head', () => {
+      sim.reset(1818);
+      forceRoute('R_H1_PF2');
+      sim.addTrain({ id: 3, name: 'T', class: 'LIGHT_ENG', direction: 'UP',
+        path: ['E_O1_H1', 'E_H1_P101N', 'E_UM1'], headDistM: 795, speedMps: 6 });
+      let guard = 0;
+      while (sim.state.trains[0].headDistM < 800 && guard++ < 500) sim.tick();
+      const crossed = sim.state.trains[0].headDistM >= 800;
+      sim.tick();   // the following tick's aspects see TC_P101 occupied -> RED
+      return crossed && layout.signal('H1').aspect === 'RED';
+    });
+    check('T19 AS1 cannot clear without Line Clear', () => {
+      sim.reset(1919);
+      sim.state.blocks['BLOCK EAST'] = 'LINE_CLOSED';
+      const res = sim.requestRoute('R_AS1_BLK');
+      sim.state.blocks['BLOCK EAST'] = 'LINE_CLEAR_GRANTED';
+      const res2 = sim.requestRoute('R_AS1_BLK');
+      return !res.ok && res.code === 'NO_LINE_CLEAR' && /BLOCK EAST/.test(res.message) && res2.ok;
+    });
+    check('T20 absolute block: no second Line Clear while TRAIN_ON_LINE', () => {
+      sim.reset(2020);
+      const first = sim.askLineClear('BLOCK EAST');
+      sim.state.blocks['BLOCK EAST'] = 'TRAIN_ON_LINE';
+      const second = sim.askLineClear('BLOCK EAST');
+      const third = sim.askLineClear('BLOCK WEST');
+      return first.ok && !second.ok && second.code === 'BLOCK_OCCUPIED' &&
+        /TRAIN ON LINE/.test(second.message) && third.ok;
+    });
+
     // ---- STEP 6: train movement / braking (T21, TRN-026) ----
     check('T21 braking distance (late Yellow) -> SPAD', () => {
       sim.reset(4242);
@@ -1615,10 +1965,11 @@ const tests = (function () {
       forceRoute('R_H1_PF2');
       sim.addTrain({ id: 12951, name: 'T', class: 'RAJDHANI', direction: 'UP',
         path: ['E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2'], headDistM: 100, speedMps: 26.67 });
-      // 700 m short of H1 — well inside stopping distance, so it must stop short
+      // 700 m short of H1 — well inside stopping distance, so it must stop short.
+      // (From 96 km/h at service brake it takes ~42 s to stop, hence 6000 ticks.)
       const res = sim.cancelRoute('R_H1_PF2');
       let guard = 0;
-      while (!sim.state.frozen && guard++ < 2400) sim.tick();
+      while (!sim.state.frozen && guard++ < 6000) sim.tick();
       const t = sim.state.trains[0];
       return res.ok && sim.state.hazards.length === 0 && t.headDistM < 800 && t.speedMps < 0.05;
     });
@@ -1704,8 +2055,27 @@ const render = (function () {
     drawTrains(f);
     drawSignals(f);
     drawSelection(f);
+    drawApproachLock(f);
     drawLabels(f);
     drawBoundaryMarkers(f);
+  }
+
+  /* ILK-053: the approach-lock countdown is drawn prominently at the origin
+     signal so the player watches the 120 s penalty tick down. */
+  function drawApproachLock(f) {
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (const rid in sim.state.routes) {
+      const rt = sim.state.routes[rid];
+      if (rt.state !== 'APPROACH_LOCKED') continue;
+      const sig = layout.signal(rt.signalId);
+      if (!sig) continue;
+      const n = layout.node(sig.atNode);
+      const [x, y] = T(n.x, n.y, f);
+      ctx.fillStyle = col.ROUTE_LOCKING;
+      ctx.fillText('APPROACH LOCK ' + Math.ceil(rt.approachLockS) + 's', x, y - 42);
+    }
+    ctx.textAlign = 'left';
   }
 
   /* 3. route highlight overlay (REN-010): white for LOCKED_AND_PROVED,
@@ -2218,8 +2588,14 @@ const input = (function () {
   console.log('[tests] ' + tPass + '/' + tResults.length + ' passed', tResults);
   status.textContent += '  ·  tests: ' + tPass + '/' + tResults.length;
 
-  // ---- STEP 6: the Rajdhani drives itself. Set the road and watch it brake.
-  // Full UP journey: block west -> D1 -> O1 -> H1 -> yard -> AS1 -> block east.
+  // ---- STEP 7: the Rajdhani runs the through road end to end. It brakes in
+  // off BLOCK WEST through D1 (G) / O1 (DY) / H1 (Y) to a stand at the PF2
+  // platform against S2 (RED). Standing in the berth releases H1's overlap, so
+  // the departure road can then be set: Line Clear EAST is asked+granted and
+  // R_S2_AS1 clears; the train runs to AS1, the AS1 road clears, and it leaves
+  // into BLOCK EAST (instrument flips TRAIN_ON_LINE, then LINE_CLOSED). Watch
+  // the section behind the train release as it goes, and cancel H1 late for a
+  // real 120 s approach lock.
   const UP_PATH = ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4', 'E_UM5', 'E_UM6', 'E_AS1', 'E_BEU'];
 
   sim.reset(12345);
@@ -2232,19 +2608,64 @@ const input = (function () {
   input.setup();
   render.setup();
 
-  // ---- STEP 6 demo: grant Line Clear and set the RECEPTION road. The train
-  // comes off the block through D1 (G) / O1 (DY) / H1 (Y) and brakes to a
-  // stand at the platform against S2 (RED) — a full approach cascade. Cancel
-  // R_H1_PF2 late (right-click H1) while it is braking and you get a real SPAD.
-  // (Dispatch via S2/AS1 arrives in STEP 7, when sectional release lets H1's
-  // route free.) ----
-  sim.state.blocks['BLOCK EAST'] = 'LINE_CLEAR_GRANTED';
+  // BLOCK WEST is pre-granted (the neighbour's inbound request was accepted) so
+  // the reception road O1 can clear; BLOCK EAST is left for the demo to work.
   sim.state.blocks['BLOCK WEST'] = 'LINE_CLEAR_GRANTED';
-  const demo = sim.requestRoute('R_O1_BH1');
+  const demoSet = sim.requestRoute('R_O1_BH1');
   sim.requestRoute('R_H1_PF2');
-  if (demo.ok) ui.showMessage('DEMO — reception to PF2 set; watch the train brake in. Cancel H1 late = SPAD.', false);
-  else ui.showMessage('DEMO — ' + demo.message, true);
+  if (demoSet.ok) ui.showMessage('DEMO — reception to PF2 set; the train brakes in. It will run out again once you have cleared the departure road.', false);
+  else ui.showMessage('DEMO — ' + demoSet.message, true);
   signalling.computeAspects(sim.st());
+
+  // scripted continuation: act only when the train stands where we expect and
+  // the player has not already set the road (so player action always wins)
+  const demo = { stage: 'reception' };
+  function demoStep() {
+    if (sim.state.frozen || demo.stage === 'done') return;
+    const t = sim.state.trains.find(x => !x.despawned);
+    if (!t) return;
+    if (demo.stage === 'reception') {
+      if (t.speedMps < 0.05 && t.headDistM > 3500) {          // standing in the PF2 berth (S2 at 3600)
+        demo.stage = 'dispatch';
+        if (sim.state.blocks['BLOCK EAST'] !== 'LINE_CLEAR_GRANTED') {
+          const a = sim.askLineClear('BLOCK EAST');
+          if (a.ok) sim.grantLineClear('BLOCK EAST');          // neighbour replies promptly here
+        }
+        const r = sim.requestRoute('R_S2_AS1');
+        ui.showMessage(r.ok ? 'DEMO — train at stand; Line Clear EAST granted, S2 road set — it departs.' : 'DEMO — ' + r.message, !r.ok);
+      }
+    } else if (demo.stage === 'dispatch') {
+      if (t.speedMps < 0.05 && t.headDistM > 3900) {          // standing at AS1 (at 4040)
+        demo.stage = 'done';
+        const r = sim.requestRoute('R_AS1_BLK');
+        ui.showMessage(r.ok ? 'DEMO — AS1 road set; the train leaves into BLOCK EAST.' : 'DEMO — ' + r.message, !r.ok);
+      }
+    }
+  }
+
+  // ---- block instrument widget (BLK-040) ----
+  const blockUI = {
+    'BLOCK EAST': { state: document.getElementById('beast-state'), ask: document.getElementById('beast-ask'), grant: document.getElementById('beast-grant') },
+    'BLOCK WEST': { state: document.getElementById('bwest-state'), ask: document.getElementById('bwest-ask'), grant: document.getElementById('bwest-grant') },
+  };
+  for (const b of ['BLOCK EAST', 'BLOCK WEST']) {
+    blockUI[b].ask.addEventListener('click', () => {
+      const r = sim.askLineClear(b);
+      ui.showMessage(r.message || (b + ' — refused'), !r.ok);
+    });
+    blockUI[b].grant.addEventListener('click', () => {
+      const r = sim.grantLineClear(b);
+      ui.showMessage(r.message || (b + ' — no request to grant'), !r.ok);
+    });
+  }
+  function updateBlocksUI() {
+    for (const b of ['BLOCK EAST', 'BLOCK WEST']) {
+      const st = sim.blockState(b).replace(/_/g, ' ');
+      const el = blockUI[b].state;
+      el.textContent = st;
+      el.className = 'bstate ' + (st === 'LINE CLEAR GRANTED' ? 'granted' : st === 'LINE CLEAR ASKED' ? 'asked' : st === 'TRAIN ON LINE' ? 'online' : '');
+    }
+  }
 
   // speed buttons (SIM-004: 0/1/2/5 ×, never by scaling DT)
   function setSpeed(s) {
@@ -2303,6 +2724,7 @@ const input = (function () {
       sim.tick(); acc -= CONST.DT; ticks++;
     }
     if (ticks >= CONST.MAX_TICKS_PER_FRAME) acc = 0;   // SIM-003: discard excess
+    demoStep();
     if (sim.state.frozen && !app.announced && sim.state.hazards.length) {
       const h = sim.state.hazards[0];
       ui.showMessage('SPAD — train ' + h.trainId + ' passed signal ' + h.signalId +
@@ -2310,6 +2732,7 @@ const input = (function () {
       status.style.color = '#ff3b30';
       app.announced = true;
     }
+    updateBlocksUI();
     updateTelemetry();
     render.draw();
     requestAnimationFrame(gameLoop);
