@@ -22,6 +22,13 @@
   #hud .clock { font-size: 16px; color: #e8eef5; }
   #hud .title { color: #6b7885; }
   #hud .stage { margin-left: auto; color: #ffb020; }
+  #hud .speed { display: flex; align-items: center; gap: 4px; }
+  #hud .speed button {
+    background: rgba(255,255,255,0.06); color: #c9d4e0; border: 1px solid #1c232c;
+    border-radius: 4px; font: 600 11px ui-monospace, monospace;
+    padding: 2px 7px; cursor: pointer;
+  }
+  #hud .speed button.on { background: #ffb020; color: #0b0e12; border-color: #ffb020; }
   #statusbar {
     position: absolute; left: 0; right: 0; bottom: 0; height: 28px;
     display: flex; align-items: center; padding: 0 12px;
@@ -61,23 +68,29 @@
   <div id="hud">
     <span class="clock">10:00:00</span>
     <span class="title">KHARGAON JN — Station Master</span>
-    <span class="stage">STEP 5 · ASPECTS — every signal derived, not chosen</span>
+    <span class="stage">STEP 6 · TRAIN MOVEMENT — braking distance is real</span>
+    <span class="speed" id="speedrow">
+      <button id="spd0" title="pause">⏸</button>
+      <button id="spd1" class="on" title="1×">1</button>
+      <button id="spd2" title="2×">2</button>
+      <button id="spd5" title="5×">5</button>
+    </span>
   </div>
   <div id="statusbar"></div>
   <div id="messagestrip"></div>
   <div id="helpbar">
     click a signal → click a line to set a route<br>
     right-click signal = cancel route · shift-click a point = throw it<br>
-    Esc = clear selection
+    space = pause · 1 / 2 / 5 = sim speed · Esc = clear selection
   </div>
   <div id="debugpanel">
     <div class="row">
-      <label>Debug: move train 12951 (Rajdhani, 597 m) along UP</label>
-      <input type="range" id="trainSlider" min="0" max="3600" step="1" value="0">
+      <label>12951 RAJDHANI (UP)</label>
+      <span id="traininfo" class="head">…</span>
     </div>
     <div class="row">
-      <span id="headinfo" class="head">head 0 m</span>
-      <span id="occinfo" class="occ">circuits: —</span>
+      <span id="siginfo" class="occ">…</span>
+      <span id="occsum" class="occ">circuits: —</span>
     </div>
   </div>
 </div>
@@ -143,6 +156,9 @@ const CONST = {
     FAILED_TC:     '#c04ad0',
   },
 };
+
+// shared runtime app state (sim speed multiplier, one-shot fail announcement)
+const app = { speed: 1, announced: false };
 
 /* ----------------------------------------------------------------------------
    2. layout — station topology data + query helpers (pure)
@@ -379,6 +395,15 @@ const layout = (function () {
       pointSettings: { P104:'NORMAL', P102:'REVERSE' },
       overlapCircuitIds: ['TC_GL4','TC_GL5'], overlapM: 120,
       diverging: true, indicatorText: 'G', nextSignalId: 'S4', usableLengthM: 720 },
+    // ---- outer / approach (SIG-021: the Outer is a stop signal needing Line Clear) ----
+    { id: 'R_O1_BH1', fromSignal: 'O1', toBerth: 'TC_BH1', class: 'MAIN',
+      edgeIds: ['E_O1_H1'], circuitIds: ['TC_BH1'], pointSettings: {},
+      overlapCircuitIds: ['TC_BH1'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'H1', usableLengthM: 800 },
+    { id: 'R_O2_BH2', fromSignal: 'O2', toBerth: 'TC_BH2', class: 'MAIN',
+      edgeIds: ['E_O2_H2'], circuitIds: ['TC_BH2'], pointSettings: {},
+      overlapCircuitIds: ['TC_BH2'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'H2', usableLengthM: 800 },
     // ---- departure, UP ----
     { id: 'R_S1_AS1', fromSignal: 'S1', toBerth: 'TC_AS1', class: 'MAIN',
       edgeIds: ['E_L1D','E_P103D','E_AS1'],
@@ -450,9 +475,12 @@ const layout = (function () {
     signalApproachCircuit[s.id] = best ? best.circuitId : null;
   }
 
-  // block instrument name for an ADVANCED_STARTER (ILK-050 / BLK-020)
+  // block instrument name for an OUTER (incoming) or ADVANCED_STARTER (outgoing).
+  // O1 admits UP trains from the west block; AS2 sends DN trains out to it.
   function signalBlockName(sig) {
-    return sig.id === 'AS1' ? 'BLOCK EAST' : sig.id === 'AS2' ? 'BLOCK WEST' : null;
+    if (sig.id === 'AS1' || sig.id === 'O2') return 'BLOCK EAST';
+    if (sig.id === 'AS2' || sig.id === 'O1') return 'BLOCK WEST';
+    return null;
   }
 
   // last edge of a route ends at a BUFFER node?
@@ -644,9 +672,9 @@ const interlock = (function () {
     if (r.class !== 'SHUNT' && st.routeEndsAtBuffer(routeId))
       return refuse('DEAD_END', 'ROUTE REFUSED — dead end, shunt movement only');
 
-    // 10. advanced starter needs Line Clear
+    // 10. outer / advanced starter need Line Clear (SIG-021, SIG-024, BLK-020)
     const sig = st.signal(r.fromSignal);
-    if (sig.type === 'ADVANCED_STARTER' && !st.lineClearGranted(sig))
+    if ((sig.type === 'ADVANCED_STARTER' || sig.type === 'OUTER') && !st.lineClearGranted(sig))
       return refuse('NO_LINE_CLEAR', 'ROUTE REFUSED — ' + st.blockFor(sig) + ' has not granted Line Clear');
 
     // 11. approach-locking timer still running on this route
@@ -978,6 +1006,119 @@ const trains = (function () {
 })();
 
 /* ----------------------------------------------------------------------------
+   3b. motion — driver + physics (pure). TRN-020..034: semi-implicit Euler
+   integration, braking-distance targets, the aspect-driven driver model.
+   Reads layout + train only — never route state, never occupancy (TRN-031).
+   ------------------------------------------------------------------------- */
+const motion = (function () {
+  function kph(v) { return v * 3.6; }
+  function mps(v) { return v / 3.6; }
+
+  // signal id -> distance from the start of a train path, cached per path.
+  // A signal's node appears where an edge ends (or starts) on that path.
+  const posCache = new Map();
+  function signalPositions(path) {
+    const key = path.join('>');
+    const hit = posCache.get(key);
+    if (hit) return hit;
+    const map = {};
+    let acc = 0;
+    for (const eid of path) {
+      const e = trains.edge(eid);
+      for (const s of layout.getSignals()) {
+        if (s.atNode === e.from && !(s.id in map)) map[s.id] = acc;
+        if (s.atNode === e.to && !(s.id in map)) map[s.id] = acc + e.lengthM;
+      }
+      acc += e.lengthM;
+    }
+    posCache.set(key, map);
+    return map;
+  }
+
+  // nearest signal ahead of the head, with distance in metres (TRN-030)
+  function nearestSignalAhead(path, headDist) {
+    const map = signalPositions(path);
+    let best = null;
+    for (const id in map) if (map[id] > headDist + 1e-6 && (!best || map[id] < best.pos)) best = { id, pos: map[id] };
+    if (!best) return null;
+    const sig = layout.signal(best.id);
+    return { id: sig.id, sig, aspect: sig.aspect, distM: best.pos - headDist };
+  }
+
+  // the stop signal immediately beyond `sigId` on the same line (TRN-030)
+  function signalAfter(sigId) {
+    const s = layout.signal(sigId);
+    if (!s) return null;
+    const nid = (s.nextSignalIds && s.nextSignalIds.NORMAL) || null;
+    return nid ? layout.signal(nid) : null;
+  }
+
+  function distanceBetween(path, sigAId, sigBId) {
+    const map = signalPositions(path);
+    if (!(sigAId in map) || !(sigBId in map)) return Infinity;
+    return map[sigBId] - map[sigAId];
+  }
+
+  // TRN-023: highest speed from which vEnd can be reached within distance d,
+  // including REACTION_S seconds of reaction at current speed.
+  function brakeCurve(train, d, vEnd) {
+    const usable = Math.max(0, d - train.speedMps * CONST.REACTION_S);
+    return Math.sqrt(vEnd * vEnd + 2 * train.brakeSvc * usable);
+  }
+
+  // TRN-025: permanent line-speed cap = min(train max, current edge max), in
+  // m/s. (Diverging/turnout restrictions arrive through the aspect: a diverging
+  // route is always YELLOW with a 30 km/h route indicator cap.)
+  function lineSpeed(train, path, headDist) {
+    const pos = trains.positionAt(path, headDist);
+    const edgeMax = pos.edge.maxSpeedKph || 110;
+    return mps(Math.min(train.maxSpeedKph, edgeMax));
+  }
+
+  // TRN-030: the driver targets a speed from the nearest signal's aspect.
+  // Not clairvoyant: reads only the displayed aspect (TRN-031). The 3 s
+  // reaction is baked into brakeCurve, so improvements act immediately while
+  // deteriorations pay the reaction distance (TRN-032).
+  function targetSpeed(train, path, headDist) {
+    const ns = nearestSignalAhead(path, headDist);
+    if (!ns) return lineSpeed(train, path, headDist);
+
+    switch (ns.aspect) {
+      case 'RED':
+        if (train.callingOnAuthority) return mps(CONST.CALL_ON_SPEED_KPH);
+        { const b = brakeCurve(train, ns.distM, 0);
+          // never accelerate at a Red: track the brake curve down to v=0 and
+          // stop AT the signal (min with current speed = coast until needed)
+          return Math.max(0, Math.min(b, train.speedMps)); }
+      case 'YELLOW': {
+        const after = signalAfter(ns.id);
+        const dNext = after ? ns.distM + distanceBetween(path, ns.id, after.id) : ns.distM + 10000;
+        const cap = mps(ns.sig.routeIndicator ? CONST.TURNOUT_KPH : 60);
+        return Math.min(brakeCurve(train, dNext, 0), cap);
+      }
+      case 'DOUBLE_YELLOW': return mps(70);
+      default:               return lineSpeed(train, path, headDist);
+    }
+  }
+
+  // signals whose node the head crossed between prevHead and newHead
+  function crossedSignals(path, prevHead, newHead) {
+    const map = signalPositions(path);
+    const out = [];
+    for (const id in map) {
+      const pos = map[id];
+      if (pos > prevHead + 1e-6 && pos <= newHead + 1e-6) {
+        out.push({ id, sig: layout.signal(id), aspect: layout.signal(id).aspect });
+      }
+    }
+    return out;
+  }
+
+  return { kph, mps, signalPositions, nearestSignalAhead, signalAfter,
+           distanceBetween, brakeCurve, lineSpeed, targetSpeed, crossedSignals };
+})();
+
+/* ----------------------------------------------------------------------------
    6. timetable — not yet built (step 8)
    ------------------------------------------------------------------------- */
 const timetable = {};
@@ -1010,6 +1151,8 @@ const sim = (function () {
     routes: {},          // routeId -> { state, approachLockS, signalId }
     failedCircuits: new Set(),
     blocks: {},          // 'BLOCK EAST'/'BLOCK WEST' -> instrument state
+    hazards: [],         // FAI-010: [{ type, trainId, signalId, time, speedKph }]
+    frozen: false,       // instant-fail freeze (FAI-050)
   };
 
   // each point's resting position (captured from the shipped layout)
@@ -1022,6 +1165,8 @@ const sim = (function () {
     state.gameTime = 0;
     state.trains = [];
     state.failedCircuits = new Set();
+    state.hazards = [];
+    state.frozen = false;
     state.blocks = { 'BLOCK EAST': 'LINE_CLOSED', 'BLOCK WEST': 'LINE_CLOSED' };
     // route runtime states keyed by route id (ILK-010)
     state.routes = {};
@@ -1089,11 +1234,18 @@ const sim = (function () {
       lengthM: cfg.lengthM !== undefined ? cfg.lengthM : cls.lengthM,
       colour: cfg.colour || cls.colour,
       maxSpeedKph: cfg.maxSpeedKph !== undefined ? cfg.maxSpeedKph : cls.maxSpeedKph,
+      accel: cfg.accel !== undefined ? cfg.accel : cls.accel,          // TRN-022
+      brakeSvc: cfg.brakeSvc !== undefined ? cfg.brakeSvc : cls.brakeSvc,
       direction: cfg.direction || 'UP',
       path: cfg.path,
+      pathLengthM: trains.pathLength(cfg.path),
       headDistM: cfg.headDistM || 0,
-      speedMps: 0,
+      prevHeadDistM: cfg.headDistM || 0,
+      speedMps: cfg.speedMps || 0,
+      targetSpeedMps: 0,
       state: 'STOPPED',
+      callingOnAuthority: false,
+      despawned: false,
       occupiedCircuits: [],
     });
     updateOccupancy();
@@ -1102,6 +1254,7 @@ const sim = (function () {
   // TRN-040: occupancy derived every tick from train extents
   function updateOccupancy() {
     for (const t of state.trains) {
+      if (t.despawned) { t.occupiedCircuits = []; continue; }
       t.occupiedCircuits = trains.occupiedCircuits(t.path, t.headDistM, t.lengthM);
     }
   }
@@ -1137,12 +1290,75 @@ const sim = (function () {
     }
   }
 
+  /* SIM-010: tick phases in load-bearing order. Order is safety-critical —
+     aspects are computed BEFORE drivers read them and occupancy AFTER movement
+     (SIM-011), so a signal cannot flip to danger and SPAD a train that had
+     not yet moved in the same tick. */
   function tick() {
-    state.gameTime += CONST.DT;
-    tickPoints();
-    tickRoutes();
-    updateOccupancy();
-    signalling.computeAspects(st());
+    if (state.frozen) return;
+    consumeIntents();      // 1. step 8: player intent queue (no-op until then)
+    tickTimers();          // 2. point swing, route locking, approach lock
+    signalling.computeAspects(st());   // 3. derive every aspect
+    driveTrains();         // 4. each driver sets target speed
+    moveTrains();          // 5. integrate physics
+    updateOccupancy();     // 6. recompute circuit occupancy from extents
+    sectionalRelease();    // 7. step 7: release route segments behind trains
+    detectHazards();       // 8. SPAD / collision / derailment / deadlock
+    updateScoring();       // 9. step 8: delay / throughput accumulators
+    advanceClock();        // 10. gameTime += DT
+  }
+
+  function consumeIntents() {}        // step 8 (SIM-030)
+  function sectionalRelease() {}      // step 7 (ILK-060)
+  function updateScoring() {}         // step 8 (SCO-010)
+
+  function tickTimers() { tickPoints(); tickRoutes(); }
+
+  function advanceClock() { state.gameTime += CONST.DT; }
+
+  /* TRN-020..026: semi-implicit Euler. Drive speed toward the driver's target
+     (accelerate at ACCEL, brake at BRAKE_SVC), clamp v >= 0. A train CANNOT
+     stop instantly — a late Yellow means the brake curve target is below the
+     current speed and the train overshoots into a SPAD (TRN-026). */
+  function driveTrains() {
+    for (const t of state.trains) {
+      if (t.despawned) continue;
+      const target = motion.targetSpeed(t, t.path, t.headDistM);
+      t.targetSpeedMps = target;
+      if (target > t.speedMps + 0.001)      t.speedMps = Math.min(target, t.speedMps + t.accel * CONST.DT);
+      else if (target < t.speedMps - 0.001) t.speedMps = Math.max(target, t.speedMps - t.brakeSvc * CONST.DT);
+      t.speedMps = Math.max(0, t.speedMps);
+      t.state = t.speedMps < 0.05 ? 'STOPPED' : (target < t.speedMps - 0.001 ? 'BRAKING' : 'RUNNING');
+    }
+  }
+
+  function moveTrains() {
+    for (const t of state.trains) {
+      if (t.despawned) continue;
+      t.prevHeadDistM = t.headDistM;
+      t.headDistM = Math.min(t.headDistM + t.speedMps * CONST.DT, t.pathLengthM);
+      if (t.headDistM >= t.pathLengthM - 0.001) t.despawned = true;   // TRN-052 (despawn log in step 8)
+    }
+  }
+
+  /* FAI-010: SPAD — head crosses a signal node while that signal shows RED and
+     the train holds no calling-on / manual authority for it. Distants can
+     never show RED (T09) so are structurally excluded. */
+  function detectHazards() {
+    for (const t of state.trains) {
+      if (t.despawned) continue;
+      const crossed = motion.crossedSignals(t.path, t.prevHeadDistM, t.headDistM);
+      for (const c of crossed) {
+        if (c.aspect === 'RED' && !t.callingOnAuthority) {
+          state.hazards.push({
+            type: 'SPAD', trainId: t.id, signalId: c.id,
+            time: state.gameTime, speedKph: Math.round(motion.kph(t.speedMps)),
+          });
+          state.frozen = true;
+          break;
+        }
+      }
+    }
   }
 
   return {
@@ -1378,6 +1594,33 @@ const tests = (function () {
       const res = sim.requestRoute('R_H1_PF1');   // LOOP1, usableLengthM 620
       return !res.ok && res.code === 'TRAIN_TOO_LONG' &&
         /651/.test(res.message) && /620/.test(res.message);
+    });
+
+    // ---- STEP 6: train movement / braking (T21, TRN-026) ----
+    check('T21 braking distance (late Yellow) -> SPAD', () => {
+      sim.reset(4242);
+      forceRoute('R_H1_PF2');   // H1 cleared
+      sim.addTrain({ id: 12951, name: 'T', class: 'RAJDHANI', direction: 'UP',
+        path: ['E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2'], headDistM: 420, speedMps: 26.67 });
+      // 96 km/h with its head 380 m short of H1 (N_H1 at 800 m); the signal
+      // drops to RED (route cancelled) inside its braking distance (~588 m)
+      const res = sim.cancelRoute('R_H1_PF2');
+      let guard = 0;
+      while (!sim.state.frozen && guard++ < 2400) sim.tick();
+      const spad = sim.state.hazards.find(h => h.type === 'SPAD' && h.signalId === 'H1' && h.trainId === 12951);
+      return res.ok && res.approachLocked && !!spad && spad.speedKph > 0;
+    });
+    check('T21b stops short of a Red given room (no SPAD)', () => {
+      sim.reset(4243);
+      forceRoute('R_H1_PF2');
+      sim.addTrain({ id: 12951, name: 'T', class: 'RAJDHANI', direction: 'UP',
+        path: ['E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2'], headDistM: 100, speedMps: 26.67 });
+      // 700 m short of H1 — well inside stopping distance, so it must stop short
+      const res = sim.cancelRoute('R_H1_PF2');
+      let guard = 0;
+      while (!sim.state.frozen && guard++ < 2400) sim.tick();
+      const t = sim.state.trains[0];
+      return res.ok && sim.state.hazards.length === 0 && t.headDistM < 800 && t.speedMps < 0.05;
     });
 
     return results;
@@ -1975,9 +2218,9 @@ const input = (function () {
   console.log('[tests] ' + tPass + '/' + tResults.length + ' passed', tResults);
   status.textContent += '  ·  tests: ' + tPass + '/' + tResults.length;
 
-  // ---- STEP 2: one hand-placed train + debug slider -------------------------
-  const UP_PATH = ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4'];
-  const PATH_M = trains.pathLength(UP_PATH);
+  // ---- STEP 6: the Rajdhani drives itself. Set the road and watch it brake.
+  // Full UP journey: block west -> D1 -> O1 -> H1 -> yard -> AS1 -> block east.
+  const UP_PATH = ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4', 'E_UM5', 'E_UM6', 'E_AS1', 'E_BEU'];
 
   sim.reset(12345);
   sim.addTrain({
@@ -1989,38 +2232,85 @@ const input = (function () {
   input.setup();
   render.setup();
 
-  // ---- STEP 5: live aspect derivation (SIG-040). The demo sets a reception
-  // route so the player immediately sees H1 step up from RED to YELLOW as the
-  // points prove; dragging the debug train in then drops it back to RED. ----
-  // grant Line Clear on both blocks so Advanced Starter routes can clear
+  // ---- STEP 6 demo: grant Line Clear and set the RECEPTION road. The train
+  // comes off the block through D1 (G) / O1 (DY) / H1 (Y) and brakes to a
+  // stand at the platform against S2 (RED) — a full approach cascade. Cancel
+  // R_H1_PF2 late (right-click H1) while it is braking and you get a real SPAD.
+  // (Dispatch via S2/AS1 arrives in STEP 7, when sectional release lets H1's
+  // route free.) ----
   sim.state.blocks['BLOCK EAST'] = 'LINE_CLEAR_GRANTED';
   sim.state.blocks['BLOCK WEST'] = 'LINE_CLEAR_GRANTED';
-  const demo = sim.requestRoute('R_H1_PF2');
-  if (demo.ok) ui.showMessage('DEMO — reception to PF2 set; drag the train, set more routes', false);
+  const demo = sim.requestRoute('R_O1_BH1');
+  sim.requestRoute('R_H1_PF2');
+  if (demo.ok) ui.showMessage('DEMO — reception to PF2 set; watch the train brake in. Cancel H1 late = SPAD.', false);
   else ui.showMessage('DEMO — ' + demo.message, true);
   signalling.computeAspects(sim.st());
 
-  const slider = document.getElementById('trainSlider');
-  const headInfo = document.getElementById('headinfo');
-  const occInfo = document.getElementById('occinfo');
+  // speed buttons (SIM-004: 0/1/2/5 ×, never by scaling DT)
+  function setSpeed(s) {
+    app.speed = s;
+    document.getElementById('spd0').classList.toggle('on', s === 0);
+    document.getElementById('spd1').classList.toggle('on', s === 1);
+    document.getElementById('spd2').classList.toggle('on', s === 2);
+    document.getElementById('spd5').classList.toggle('on', s === 5);
+  }
+  document.getElementById('spd0').addEventListener('click', () => setSpeed(app.speed === 0 ? 1 : 0));
+  document.getElementById('spd1').addEventListener('click', () => setSpeed(1));
+  document.getElementById('spd2').addEventListener('click', () => setSpeed(2));
+  document.getElementById('spd5').addEventListener('click', () => setSpeed(5));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === ' ') { e.preventDefault(); setSpeed(app.speed === 0 ? 1 : 0); }
+    else if (e.key === '1') setSpeed(1);
+    else if (e.key === '2') setSpeed(2);
+    else if (e.key === '5') setSpeed(5);
+  });
 
-  function updateDebugTrain() {
-    sim.state.trains[0].headDistM = Number(slider.value);
-    sim.updateOccupancy();
-    const t = sim.state.trains[0];
-    const hp = trains.headPoint(t.path, t.headDistM);
-    const kmh = Math.round(t.speedMps * 3.6);
-    headInfo.textContent = 'head ' + t.headDistM.toFixed(0) + ' m @ ' + hp.edgeId + ' +' + hp.offsetM.toFixed(0) + ' m · ' + kmh + ' km/h';
-    occInfo.textContent = 'circuits: ' + (t.occupiedCircuits.length ? t.occupiedCircuits.join(' ') : '—');
-    render.draw();
+  const clockEl = document.querySelector('#hud .clock');
+  const trainInfo = document.getElementById('traininfo');
+  const sigInfo = document.getElementById('siginfo');
+  const occSum = document.getElementById('occsum');
+
+  function fmtClock(t) {
+    const s = 10 * 3600 + Math.floor(t);           // level starts 10:00:00 (SIM-021)
+    const h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60, sec = s % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
   }
 
-  slider.addEventListener('input', updateDebugTrain);
-  updateDebugTrain();
+  // DBG-003: live per-train telemetry
+  function updateTelemetry() {
+    clockEl.textContent = fmtClock(sim.state.gameTime);
+    const t = sim.state.trains.find(x => !x.despawned) || sim.state.trains[0];
+    if (!t) { trainInfo.textContent = '—'; sigInfo.textContent = '—'; occSum.textContent = 'circuits: —'; return; }
+    const kmh = Math.round(motion.kph(t.speedMps));
+    const tgt = Math.round(motion.kph(t.targetSpeedMps));
+    const ns = motion.nearestSignalAhead(t.path, t.headDistM);
+    trainInfo.textContent = t.id + ' · ' + kmh + ' km/h → ' + tgt + ' · ' + t.state;
+    sigInfo.textContent = ns
+      ? 'next ' + ns.id + ' ' + ns.aspect + ' ' + ns.distM.toFixed(0) + ' m · braking@' + Math.round(motion.kph(motion.brakeCurve(t, ns.distM, 0))) + ' km/h'
+      : 'next —';
+    occSum.textContent = 'circuits: ' + (t.occupiedCircuits.length ? t.occupiedCircuits.join(' ') : '—');
+  }
 
-  // ---- game loop: tick the sim and re-derive aspects live ----
-  function gameLoop() {
-    sim.tick();
+  // ---- game loop: fixed-timestep accumulator (SIM-002/003/004) ----
+  let last = performance.now();
+  let acc = 0;
+  function gameLoop(now) {
+    const dt = Math.min(0.25, (now - last) / 1000);
+    last = now;
+    acc += dt * app.speed;
+    let ticks = 0;
+    while (acc >= CONST.DT && ticks < CONST.MAX_TICKS_PER_FRAME && !sim.state.frozen) {
+      sim.tick(); acc -= CONST.DT; ticks++;
+    }
+    if (ticks >= CONST.MAX_TICKS_PER_FRAME) acc = 0;   // SIM-003: discard excess
+    if (sim.state.frozen && !app.announced && sim.state.hazards.length) {
+      const h = sim.state.hazards[0];
+      ui.showMessage('SPAD — train ' + h.trainId + ' passed signal ' + h.signalId +
+        ' at danger (' + h.speedKph + ' km/h @ ' + fmtClock(h.time) + '). Simulation frozen.', true);
+      status.style.color = '#ff3b30';
+      app.announced = true;
+    }
+    updateTelemetry();
     render.draw();
     requestAnimationFrame(gameLoop);
   }
