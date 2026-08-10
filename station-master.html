@@ -77,6 +77,73 @@
     border-radius: 4px; font-size: 10px; padding: 2px 6px; cursor: pointer;
   }
   #blockpanel button:hover { border-color: #ffb020; color: #ffb020; }
+  /* STEP 8 — score HUD (SCO-040), train order (UI-020), modals (FAI-050/LVL-011) */
+  #scorewrap { position: relative; }
+  #score {
+    display: inline-block; padding: 2px 10px; border: 1px solid #1c232c;
+    border-radius: 4px; background: rgba(255,255,255,0.05);
+    font: 700 13px ui-monospace, monospace; color: #e8eef5; cursor: default;
+  }
+  #score.poor { color: #ffb020; }
+  #score.dead { color: #ff3b30; border-color: #ff3b30; }
+  #scorebreakdown {
+    display: none; position: absolute; top: 30px; right: 0; z-index: 8;
+    min-width: 320px; padding: 10px 12px; border: 1px solid #2a3038;
+    border-radius: 6px; background: rgba(11,14,18,0.97); font-size: 12px;
+    line-height: 1.7; color: #c9d4e0; white-space: nowrap;
+  }
+  #scorewrap:hover #scorebreakdown { display: block; }
+  #scorebreakdown .comp { display: flex; justify-content: space-between; gap: 16px; }
+  #scorebreakdown .total { border-top: 1px solid #2a3038; margin-top: 4px; padding-top: 4px;
+    font-weight: bold; color: #e8eef5; }
+  #scorebreakdown .neg { color: #ff3b30; }
+  #trainlist {
+    position: absolute; top: 48px; left: 12px; z-index: 5;
+    padding: 8px 10px; border: 1px solid #1c232c; border-radius: 6px;
+    background: rgba(11,14,18,0.9); font-size: 11px; color: #6b7885;
+    display: flex; flex-direction: column; gap: 4px; min-width: 340px;
+  }
+  #trainlist .trow { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #trainlist .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  #trainlist .tid { color: #e8eef5; }
+  #trainlist .tname { flex: 1; color: #c9d4e0; overflow: hidden; text-overflow: ellipsis; }
+  #trainlist .tlate { color: #ffb020; font-weight: bold; }
+  #trainlist .tlate.bad { color: #ff3b30; }
+  #trainlist .tstate { color: #6b7885; }
+  .modal {
+    position: fixed; inset: 0; z-index: 20; display: none; align-items: center;
+    justify-content: center; background: rgba(4,6,9,0.72);
+  }
+  .modal.show { display: flex; }
+  .modal .box {
+    max-width: 640px; width: 92vw; max-height: 84vh; overflow: auto;
+    background: #0d1117; border: 1px solid #2a3038; border-radius: 10px;
+    padding: 22px 26px; color: #c9d4e0; font-size: 13px; line-height: 1.6;
+  }
+  .modal h2 { margin: 0 0 10px; color: #e8eef5; font-size: 18px; }
+  .modal h3 { margin: 14px 0 4px; color: #ffb020; font-size: 12px; letter-spacing: 0.08em;
+    text-transform: uppercase; }
+  .modal .why { color: #e8eef5; }
+  .modal .advise { color: #2fd05a; }
+  .modal button {
+    margin: 14px 8px 0 0; padding: 8px 16px; border: 1px solid #2a3038;
+    border-radius: 6px; background: #14181e; color: #e8eef5; cursor: pointer;
+    font: 600 12px ui-monospace, monospace;
+  }
+  .modal button.primary { background: #ffb020; color: #0b0e12; border-color: #ffb020; }
+  .modal button:hover { border-color: #ffb020; }
+  #levelmenu .lvrow {
+    display: flex; align-items: center; gap: 10px; padding: 8px 6px;
+    border-bottom: 1px solid #161c24; cursor: pointer;
+  }
+  #levelmenu .lvrow:hover { background: #14181e; }
+  #levelmenu .lvrow.locked { opacity: 0.45; cursor: not-allowed; }
+  #levelmenu .lvnum { color: #6b7885; font: 700 14px ui-monospace, monospace; width: 22px; }
+  #levelmenu .lvname { flex: 1; color: #e8eef5; font-weight: 600; }
+  #levelmenu .lvnew { color: #ffb020; font-size: 11px; }
+  #levelmenu .lvbest { color: #2fd05a; font: 11px ui-monospace, monospace; }
+  #failmodal .box { border-color: #ff3b30; }
+  #failmodal h2 { color: #ff3b30; }
 </style>
 </head>
 <body>
@@ -85,12 +152,17 @@
   <div id="hud">
     <span class="clock">10:00:00</span>
     <span class="title">KHARGAON JN — Station Master</span>
-    <span class="stage">STEP 7 · SECTIONAL RELEASE / APPROACH LOCK / BLOCK WORKING</span>
+    <span class="stage" id="stage">STEP 8 · TIMETABLE / SCORING / LEVELS</span>
+    <span id="scorewrap">
+      <span id="score" title="hover for breakdown">SCORE —</span>
+      <div id="scorebreakdown"></div>
+    </span>
     <span class="speed" id="speedrow">
       <button id="spd0" title="pause">⏸</button>
       <button id="spd1" class="on" title="1×">1</button>
       <button id="spd2" title="2×">2</button>
       <button id="spd5" title="5×">5</button>
+      <button id="levelsbtn" title="Levels">LEVELS</button>
     </span>
   </div>
   <div id="statusbar"></div>
@@ -99,11 +171,14 @@
     click a signal → click a line to set a route<br>
     right-click signal = cancel route · shift-click a point = throw it<br>
     block panel: Ask = line clear for departure · Grant = accept an inbound train<br>
+    an occupied berth can't take a normal route — re-click it to call on (C lamp, 15 km/h)<br>
+    LEVELS button opens the level list · hover SCORE for the breakdown<br>
     space = pause · 1 / 2 / 5 = sim speed · Esc = clear selection
   </div>
+  <div id="trainlist"></div>
   <div id="debugpanel">
     <div class="row">
-      <label>12951 RAJDHANI (UP)</label>
+      <label>ACTIVE TRAIN</label>
       <span id="traininfo" class="head">…</span>
     </div>
     <div class="row">
@@ -123,6 +198,45 @@
       <span class="bstate" id="bwest-state">LINE CLOSED</span>
       <button id="bwest-ask" title="Ask the neighbour for Line Clear">Ask</button>
       <button id="bwest-grant" title="Grant the neighbour's inbound request">Grant</button>
+    </div>
+  </div>
+
+  <div id="levelmenu" class="modal">
+    <div class="box">
+      <h2>KHARGAON JN — Levels</h2>
+      <div id="levelmenu-list"></div>
+      <button id="menu-close">Close</button>
+    </div>
+  </div>
+
+  <div id="briefing" class="modal">
+    <div class="box">
+      <h2 id="briefing-title"></h2>
+      <p id="briefing-text"></p>
+      <div id="briefing-rules"></div>
+      <button id="briefing-start" class="primary">Start level</button>
+      <button id="briefing-back">Back to levels</button>
+    </div>
+  </div>
+
+  <div id="failmodal" class="modal">
+    <div class="box">
+      <h2>FAILURE — level ended</h2>
+      <h3>What happened</h3><p id="fail-what"></p>
+      <h3>Which rule was broken</h3><p id="fail-rule"></p>
+      <h3>Why it happened here</h3><p id="fail-why" class="why"></p>
+      <h3>What you should have done</h3><p id="fail-advise" class="advise"></p>
+      <button id="fail-retry" class="primary">Retry level</button>
+      <button id="fail-menu">Back to menu</button>
+    </div>
+  </div>
+
+  <div id="debrief" class="modal">
+    <div class="box">
+      <h2>LEVEL COMPLETE</h2>
+      <div id="debrief-body"></div>
+      <button id="debrief-menu">Back to menu</button>
+      <button id="debrief-next" class="primary">Next level</button>
     </div>
   </div>
 </div>
@@ -145,6 +259,7 @@ const CONST = {
   POINT_MOVE_S: 4,
   CALL_ON_SPEED_KPH: 15,
   CALL_ON_DWELL_S: 60,
+  CALL_ON_GAP_M: 40,          // SIG-053: calling-on train stops this far short of the standing train
   MANUAL_AUTHORITY_KPH: 15,
   TURNOUT_KPH: 30,
   SHUNT_KPH: 15,
@@ -191,7 +306,7 @@ const CONST = {
 };
 
 // shared runtime app state (sim speed multiplier, one-shot fail announcement)
-const app = { speed: 1, announced: false };
+const app = { speed: 1, announced: false, started: false, levelId: 2, debriefShown: false };
 
 /* ----------------------------------------------------------------------------
    2. layout — station topology data + query helpers (pure)
@@ -409,6 +524,21 @@ const layout = (function () {
       pointSettings: { P101:'NORMAL', P106:'REVERSE' },
       overlapCircuitIds: ['TC_GL4','TC_GL5'], overlapM: 120,
       diverging: true, indicatorText: 'G', nextSignalId: 'S4', usableLengthM: 720 },
+    // ---- calling-on (SIG-050): same roads as R_H1_PF1/PF2 but class CALL_ON,
+    // set only into an occupied berth; the main head stays RED and the
+    // subsidiary C lamp lights below it. ----
+    { id: 'R_CO_H1_PF2', fromSignal: 'H1', toBerth: 'TC_UM4', class: 'CALL_ON',
+      edgeIds: ['E_H1_P101N','E_UM1','E_UM2','E_UM3','E_UM4'],
+      circuitIds: ['TC_P101','TC_UM1','TC_UM2','TC_UM3','TC_UM4'],
+      pointSettings: { P101:'NORMAL', P106:'NORMAL' },
+      overlapCircuitIds: ['TC_UM5','TC_P103','TC_AS1'], overlapM: 120,
+      diverging: false, indicatorText: null, nextSignalId: 'S2', usableLengthM: 700 },
+    { id: 'R_CO_H1_PF1', fromSignal: 'H1', toBerth: 'TC_L1C', class: 'CALL_ON',
+      edgeIds: ['E_P101D','E_L1A','E_L1B','E_L1C'],
+      circuitIds: ['TC_P101','TC_L1A','TC_L1B','TC_L1C'],
+      pointSettings: { P101:'REVERSE' },
+      overlapCircuitIds: ['TC_L1D','TC_P103','TC_AS1'], overlapM: 120,
+      diverging: true, indicatorText: '1', nextSignalId: 'S1', usableLengthM: 620 },
     // ---- reception, DN ----
     { id: 'R_H2_PF3', fromSignal: 'H2', toBerth: 'TC_DN4', class: 'MAIN',
       edgeIds: ['E_H2_P104N','E_DN1','E_DN2','E_DN3','E_DN4'],
@@ -665,6 +795,43 @@ const interlock = (function () {
     if (cur && cur.state !== S.IDLE)
       return refuse('ALREADY_SET', 'ROUTE ALREADY SET — ' + r.fromSignal + ' → ' + r.toBerth);
 
+    // 3.5 calling-on (SIG-051): every subsidiary condition must hold. The route
+    // ahead shares circuits with the standing train by design, so rule 4 below
+    // is skipped for CALL_ON; safety is the berth-occupancy + dwell gate here.
+    if (r.class === 'CALL_ON') {
+      const tr = st.approachingTrain(routeId);
+      if (!tr) return refuse('CALL_ON_NO_TRAIN', 'CALLING-ON REFUSED — no train standing at ' + r.fromSignal);
+      if (tr.dwellS < CONST.CALL_ON_DWELL_S)
+        return refuse('CALL_ON_DWELL', 'CALLING-ON REFUSED — ' + tr.name + ' has been at a stand at ' + r.fromSignal + ' for ' + Math.floor(tr.dwellS) + ' s (' + CONST.CALL_ON_DWELL_S + ' s required)');
+      if (!st.occupied(r.toBerth))
+        return refuse('CALL_ON_EMPTY', 'CALLING-ON REFUSED — ' + r.toBerth + ' is not occupied; calling-on couples onto a standing train');
+      const sigNode = st.signal(r.fromSignal) && st.signal(r.fromSignal).atNode;
+      for (const s2 of layout.getSignals()) {
+        if (s2.type === 'SHUNT' && s2.atNode === sigNode && st.activeRouteFrom(s2.id))
+          return refuse('CALL_ON_SHUNT', 'CALLING-ON REFUSED — shunt signal ' + s2.id + ' on the same post is off');
+      }
+      // SIG-050: calling-on supersedes the standing train's own route into the
+      // berth. A conflicting route that is fully consumed by stationary trains
+      // (every unreleased circuit still occupied at a stand) is released first,
+      // so the calling-on route can set where the normal route can never clear.
+      for (const oid of st.conflictsWith(routeId)) {
+        const o = st.route(oid);
+        if (!o || o.state === S.IDLE) continue;
+        const od = st.routeDef(oid);
+        if (!od) continue;
+        let consumed = true, anyUnreleased = false;
+        for (const c of od.circuitIds) {
+          if (o.released && o.released.indexOf(c) !== -1) continue;
+          anyUnreleased = true;
+          const occs = st.occupants(c);
+          if (occs.length === 0 || occs.some(x => x.speedMps >= 0.05)) { consumed = false; break; }
+        }
+        if (!consumed || !anyUnreleased) continue;
+        interlock.releasePoints(oid, st);
+        o.state = S.IDLE; o.released = []; o.overlapHeld = true; o.trainId = null;
+      }
+    }
+
     // 3. conflicts (shared circuit, opposing point, or geometric crossing)
     for (const oid of st.conflictsWith(routeId)) {
       const o = st.route(oid);
@@ -674,9 +841,12 @@ const interlock = (function () {
       }
     }
 
-    // 4. any route circuit occupied
-    for (const c of r.circuitIds)
-      if (st.occupied(c)) return refuse('TRACK_OCCUPIED', 'ROUTE REFUSED — ' + c + ' occupied');
+    // 4. any route circuit occupied (skipped for CALL_ON — the occupied berth
+    //    is the whole point of the movement)
+    if (r.class !== 'CALL_ON') {
+      for (const c of r.circuitIds)
+        if (st.occupied(c)) return refuse('TRACK_OCCUPIED', 'ROUTE REFUSED — ' + c + ' occupied');
+    }
 
     // 5. point locked by another route
     for (const pid of Object.keys(r.pointSettings)) {
@@ -685,11 +855,17 @@ const interlock = (function () {
         return refuse('POINT_LOCKED', 'ROUTE REFUSED — point ' + pid + ' locked by ' + p.lockedBy);
     }
 
-    // 6. point in an occupied point-zone circuit (ILK-032 — impossible, not penalised)
+    // 6. point in an occupied point-zone circuit (ILK-032 — impossible, not penalised).
+    //    For calling-on the points into an occupied berth are already proved in
+    //    the required position (the standing train used the same road), so a
+    //    CALL_ON route needs no movement; requiring one would be unsafe.
     for (const pid of Object.keys(r.pointSettings)) {
       const p = st.point(pid);
-      if (st.occupied(p.circuitId))
+      if (st.occupied(p.circuitId)) {
+        const needMove = p.position !== r.pointSettings[pid] || p.moving;
+        if (r.class === 'CALL_ON' && !needMove) continue;
         return refuse('POINT_UNDER_TRAIN', 'ROUTE REFUSED — cannot move ' + pid + ', train standing on it');
+      }
     }
 
     // 7. overlap clear for OVERLAP_M
@@ -874,6 +1050,15 @@ const signalling = (function () {
     if (sig.type === 'SHUNT')   return shuntAspect(sig, st);
 
     const route = st.activeRouteFrom(sig.id);
+
+    // SIG-050: calling-on is a subsidiary authority. The main head stays RED
+    // and the small yellow C lamp below it lights instead.
+    if (route && route.class === 'CALL_ON') {
+      sig.callingOnLit = true;
+      sig.routeIndicator = null;
+      return 'RED';
+    }
+    sig.callingOnLit = false;
 
     // 1. No route -> RED
     if (!route || route.state !== 'LOCKED_AND_PROVED') return 'RED';
@@ -1131,11 +1316,50 @@ const motion = (function () {
     return mps(Math.min(train.maxSpeedKph, edgeMax));
   }
 
+  // TRN-062: the first circuit boundary at-or-ahead of the head whose far-side
+  // circuit is occupied by another train, else null. The stop signals gate the
+  // yard circuits, but the approach sections (TC_D1 etc.) are guarded only by a
+  // distant, so the driver itself must hold at a boundary whose far side is
+  // occupied — sharing a circuit is FAI-020 collision.
+  function nextOccupiedBoundary(path, headDist, occupied) {
+    if (!occupied || occupied.size === 0) return null;
+    let acc = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+      const e = trains.edge(path[i]);
+      acc += e.lengthM;
+      if (acc + 1e-6 < headDist) continue;   // boundary already behind the head
+      const next = trains.edge(path[i + 1]);
+      return occupied.has(next.circuitId) ? acc : null;
+    }
+    return null;
+  }
+
   // TRN-030: the driver targets a speed from the nearest signal's aspect.
   // Not clairvoyant: reads only the displayed aspect (TRN-031). The 3 s
   // reaction is baked into brakeCurve, so improvements act immediately while
   // deteriorations pay the reaction distance (TRN-032).
-  function targetSpeed(train, path, headDist) {
+  function targetSpeed(train, path, headDist, occupied, callOnStopM) {
+    // SIG-053: the whole calling-on movement runs at ≤ 15 km/h and brakes to a
+    // stand short of the standing train. It overrides both the occupied-circuit
+    // hold (that is the point of calling-on) and the aspect logic.
+    if (train.callingOnAuthority) {
+      train.brakingForRed = false;
+      if (callOnStopM != null) {
+        const d = Math.max(0, callOnStopM - headDist);
+        return Math.min(mps(CONST.CALL_ON_SPEED_KPH), brakeCurve(train, d, 0));
+      }
+      return mps(CONST.CALL_ON_SPEED_KPH);
+    }
+    const occB = nextOccupiedBoundary(path, headDist, occupied);
+    if (occB != null) {
+      // TRN-062: never run into a circuit another train still occupies, whatever
+      // the aspects say.
+      const stopDist = train.speedMps * train.speedMps / (2 * train.brakeSvc)
+        + CONST.REACTION_S * train.speedMps + 0.5;
+      if (occB - headDist <= stopDist) { train.brakingForRed = true; return 0; }
+      if (train.brakingForRed) return 0;
+      return train.speedMps;
+    }
     const ns = nearestSignalAhead(path, headDist);
     if (!ns) return lineSpeed(train, path, headDist);
 
@@ -1143,7 +1367,6 @@ const motion = (function () {
 
     switch (ns.aspect) {
       case 'RED':
-        if (train.callingOnAuthority) { train.brakingForRed = false; return mps(CONST.CALL_ON_SPEED_KPH); }
         { // never accelerate at a Red. Coast at the current speed until within
           // stopping distance (TRN-023: physical stop + REACTION_S reaction),
           // then brake to a stand short of the signal. Once committed to
@@ -1179,18 +1402,201 @@ const motion = (function () {
   }
 
   return { kph, mps, signalPositions, nodePositions, nearestSignalAhead, signalAfter,
-           distanceBetween, brakeCurve, lineSpeed, targetSpeed, crossedSignals };
+           distanceBetween, brakeCurve, lineSpeed, targetSpeed, crossedSignals,
+           nextOccupiedBoundary };
 })();
 
 /* ----------------------------------------------------------------------------
-   6. timetable — not yet built (step 8)
+   6. timetable — level data + per-train paths/waypoints (step 8, LVL-001)
    ------------------------------------------------------------------------- */
-const timetable = {};
+const timetable = (function () {
+  // Named through paths (physically connected edge sequences, head to tail).
+  // arriveM = distance of the platform stop (berth far end), departM = the
+  // Advanced Starter the train must cross to leave the station (SIM-021).
+  const PATHS = {
+    'UP:PF2': { path: ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4', 'E_UM5', 'E_UM6', 'E_AS1', 'E_BEU'], arriveM: 3600, departM: 4040, platform: 'PF 2' },
+    'UP:PF1': { path: ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_P101D', 'E_L1A', 'E_L1B', 'E_L1C', 'E_L1D', 'E_P103D', 'E_AS1', 'E_BEU'], arriveM: 3564, departM: 4040, platform: 'PF 1 (LOOP 1)' },
+    'DN:PF3': { path: ['E_BED', 'E_D2_O2', 'E_O2_H2', 'E_H2_P104N', 'E_DN1', 'E_DN2', 'E_DN3', 'E_DN4', 'E_DN5', 'E_DN6', 'E_AS2', 'E_BWD'], arriveM: 3708, departM: 4148, platform: 'PF 3' },
+    'DN:PF1': { path: ['E_BED', 'E_D2_O2', 'E_O2_H2', 'E_H2_P104N', 'E_DN1', 'E_DN2', 'E_DN3', 'E_DN4', 'E_P107D', 'E_L1C', 'E_L1D', 'E_P103D', 'E_AS1', 'E_BEU'], arriveM: 4292, departM: 4800, platform: 'PF 1 (LOOP 1)' },
+  };
+
+  // LVL-001: levels are data. rulesIntroduced is surfaced by the briefing
+  // screen before the level runs (UI-090). `guided` = the level auto-runs its
+  // reception/dispatch so the demo teaches by example.
+  const LEVELS = [
+    {
+      id: 1, name: 'TUTORIAL', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 600, seed: 1001, guided: false,
+      briefing: 'You set routes, not colours. One train, one signal. Click a signal, then click the track it should take. There is no way to pick a colour — the interlocking shows it.',
+      rulesIntroduced: ['ROUTE_SETTING', 'SECTIONAL_RELEASE'],
+      passCriteria: { minScore: 600, maxDelayMin: 5 },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 240, schedDepartureS: null },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 2, name: 'RECEPTION & DISPATCH', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 900, seed: 12345, guided: true,
+      briefing: 'Receive a train to PF 2, then start it away into the block. Ask the neighbour for Line Clear EAST and grant your own inbound request WEST before you set the roads.',
+      rulesIntroduced: ['STARTER', 'BLOCK_WORKING', 'LINE_CLEAR'],
+      passCriteria: { minScore: 600, maxDelayMin: 10 },
+      initialBlocks: { 'BLOCK WEST': 'LINE_CLEAR_GRANTED' },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 200, schedDepartureS: 290 },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 3, name: 'CROSSING', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 900, seed: 40317, guided: false,
+      briefing: 'Two trains, opposite directions, one loop. Rajdhani in on the UP main; Shatabdi in from the east. One of them must take LOOP 1 — you will see Yellow with a route indicator instead of Green, and be told why.',
+      rulesIntroduced: ['DIVERGING_YELLOW', 'LOOP_RECEPTION', 'ROUTE_INDICATOR'],
+      passCriteria: { minScore: 600, maxDelayMin: 10 },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 240, schedDepartureS: 330 },
+        { id: 24572, name: 'KALKA SHATABDI', class: 'SHATABDI', direction: 'DN', platform: 'PF1', entryS: 45, schedArrivalS: 300, schedDepartureS: 540 },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 4, name: 'PRECEDENCE', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 1200, seed: 55811, guided: false,
+      briefing: 'A late Express behind a slow Goods on the same line. The classic decision: loop the Goods and let the Express through on the main, or serve the Goods first and pay for the Rajdhani delay.',
+      rulesIntroduced: ['PRIORITY', 'OVERTAKE'],
+      passCriteria: { minScore: 600, maxDelayMin: 10 },
+      trains: [
+        { id: 58123, name: 'UP GOODS', class: 'GOODS', direction: 'UP', platform: 'PF1', entryS: 0, schedArrivalS: 260, schedDepartureS: 720 },
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 30, schedArrivalS: 330, schedDepartureS: 420 },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 5, name: 'RUSH HOUR', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 1500, seed: 61319, guided: false,
+      briefing: 'Four trains, three platforms, overlapping timings. Keep them moving: a stand at a Red that you could have cleared costs you smoothness, and each minute of delay is weighted by the train\'s priority.',
+      rulesIntroduced: ['CONTENTION', 'AVOIDABLE_STOP'],
+      passCriteria: { minScore: 500, maxDelayMin: 15 },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 240, schedDepartureS: 330 },
+        { id: 24572, name: 'KALKA SHATABDI', class: 'SHATABDI', direction: 'DN', platform: 'PF3', entryS: 90, schedArrivalS: 330, schedDepartureS: 420 },
+        { id: 58123, name: 'UP GOODS', class: 'GOODS', direction: 'UP', platform: 'PF1', entryS: 150, schedArrivalS: 420, schedDepartureS: 900 },
+        { id: 34567, name: 'SHIVALIK EXPRESS', class: 'EXPRESS', direction: 'DN', platform: 'PF1', entryS: 240, schedArrivalS: 480, schedDepartureS: 600 },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 6, name: 'CALLING-ON', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 1200, seed: 72917, guided: false,
+      briefing: 'A second train must join a platform that is already occupied. Calling-on gives it a subsidiary authority to draw up slowly behind the first — hold the first long enough to see the two nose to tail.',
+      rulesIntroduced: ['CALLING_ON'],
+      passCriteria: { minScore: 500, maxDelayMin: 15 },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 240, schedDepartureS: 720 },
+        { id: 12952, name: 'PUNE SHT SPL', class: 'SHATABDI', direction: 'UP', platform: 'PF2', entryS: 300, schedArrivalS: 540, schedDepartureS: 840 },
+      ],
+      scriptedEvents: [],
+    },
+    {
+      id: 7, name: 'DEGRADED WORKING', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 1500, seed: 81793, guided: false,
+      briefing: 'TC_UM2 fails and reads permanently occupied, so no route through the UP main can be signalled. Work the section by written authority with signals unavailable — this is where a real Station Master earns their salary.',
+      rulesIntroduced: ['TRACK_CIRCUIT_FAILURE', 'MANUAL_AUTHORITY'],
+      passCriteria: { minScore: 400, maxDelayMin: 20 },
+      trains: [
+        { id: 58123, name: 'UP GOODS', class: 'GOODS', direction: 'UP', platform: 'PF1', entryS: 0, schedArrivalS: 260, schedDepartureS: 900 },
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 480, schedArrivalS: 720, schedDepartureS: 900 },
+      ],
+      scriptedEvents: [{ atS: 420, type: 'TC_FAIL', circuitId: 'TC_UM2' }],
+    },
+    {
+      id: 8, name: 'JUNCTION', station: 'KHARGAON JN', startTime: '10:00:00',
+      durationS: 1500, seed: 91961, guided: false,
+      briefing: 'Three directions and route indicators become load-bearing. Rajdhani in on the UP main, Shatabdi to LOOP 1 from the east, a Goods to the GOODS loop. Read every indicator before you send a train.',
+      rulesIntroduced: ['THIRD_DIRECTION', 'ROUTE_INDICATOR'],
+      passCriteria: { minScore: 500, maxDelayMin: 15 },
+      trains: [
+        { id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI', direction: 'UP', platform: 'PF2', entryS: 0, schedArrivalS: 240, schedDepartureS: 330 },
+        { id: 24572, name: 'KALKA SHATABDI', class: 'SHATABDI', direction: 'DN', platform: 'PF1', entryS: 60, schedArrivalS: 300, schedDepartureS: 600 },
+        { id: 58123, name: 'UP GOODS', class: 'GOODS', direction: 'UP', platform: 'PF2', entryS: 180, schedArrivalS: 480, schedDepartureS: 1080 },
+      ],
+      scriptedEvents: [],
+    },
+  ];
+
+  function levelById(id) { return LEVELS.find(l => l.id === id) || null; }
+
+  // resolve a timetable row into a spawnable train config with its path and
+  // platform waypoints (arriveM/departM measured along that path)
+  function resolve(row) {
+    const p = PATHS[row.direction + ':' + row.platform];
+    if (!p) throw new Error('timetable: no path for ' + row.direction + ':' + row.platform);
+    return Object.assign({}, row, p);
+  }
+
+  return { LEVELS, levelById, resolve, PATHS };
+})();
 
 /* ----------------------------------------------------------------------------
-   7. scoring — not yet built (step 8)
+   7. scoring — pure functions + detectors (step 8, SCO-010..040, FAI-041)
    ------------------------------------------------------------------------- */
-const scoring = {};
+const scoring = (function () {
+  function weight(priority) { return CONST.PRIORITY_WEIGHT[priority] || 0; }
+
+  // SCO-010: whole minutes, floored at 0 (early = 0 delay)
+  function delayMinutes(actualS, schedS) {
+    return Math.floor(Math.max(0, actualS - schedS) / 60);
+  }
+
+  // SCO-001: Punctuality 60% = 1000 − Σ(delayMin × weight), floor at 0
+  function punctuality(delayWeighted) { return Math.max(0, 1000 - delayWeighted); }
+
+  // SCO-001: Throughput 25% = 400 × cleared/scheduled
+  function throughput(cleared, scheduled) {
+    return scheduled ? Math.round(400 * (cleared / scheduled)) : 0;
+  }
+
+  // SCO-001: Smoothness 15% = 300 − 10·avoidableStops − 2·brakeEvents, floor 0
+  function smoothness(avoidableStops, brakeEvents) {
+    return Math.max(0, 300 - 10 * avoidableStops - 2 * brakeEvents);
+  }
+
+  // SCO-031: precedence penalty = 50 × weight difference
+  function precedencePenalty(lowWeight, highWeight) {
+    return 50 * Math.max(0, highWeight - lowWeight);
+  }
+
+  function total(p, t, s, precedencePenalties) {
+    const pc = p + t + s - (precedencePenalties || 0);
+    return Math.max(0, Math.round(pc));
+  }
+
+  // FAI-041: wait-for graph cycle detection over an adjacency map
+  // { trainId: [blockerTrainId,...] }. Any cycle ⇒ deadlock; returns the
+  // node set of one cycle, or null. Pure (TST-002 constructible).
+  function findWaitCycle(edges) {
+    const nodes = Object.keys(edges);
+    const WHITE = 0, GREY = 1, BLACK = 2;
+    const col = {};
+    const stack = [];
+    for (const n of nodes) col[n] = WHITE;
+    function dfs(u) {
+      col[u] = GREY; stack.push(u);
+      for (const v of (edges[u] || [])) {
+        if (col[v] === GREY) return stack.slice(stack.indexOf(v));   // cycle v..u
+        if (col[v] === WHITE) { const c = dfs(v); if (c) return c; }
+      }
+      stack.pop(); col[u] = BLACK; return null;
+    }
+    for (const n of nodes) if (col[n] === WHITE) { const c = dfs(n); if (c) return c; }
+    return null;
+  }
+
+  return {
+    weight, delayMinutes, punctuality, throughput, smoothness,
+    precedencePenalty, total, findWaitCycle,
+  };
+})();
 
 /* ----------------------------------------------------------------------------
    8. sim — state + fixed-timestep loop (partial: occupancy for step 2)
@@ -1217,6 +1623,16 @@ const sim = (function () {
     blocks: {},          // 'BLOCK EAST'/'BLOCK WEST' -> instrument state
     hazards: [],         // FAI-010: [{ type, trainId, signalId, time, speedKph }]
     frozen: false,       // instant-fail freeze (FAI-050)
+    level: null,         // loaded level definition (LVL-001) or null
+    spawned: [],         // timetable row ids already spawned (TRN-050)
+    score: {             // live scoring accumulators (SCO-001..040)
+      trainsCleared: 0, trainsScheduled: 0, delayWeighted: 0,
+      avoidableStops: 0, brakeEvents: 0, precedencePenalties: 0,
+      avoidableLog: [], precedenceLog: [], perTrain: {}, finalized: false,
+    },
+    audit: { refusals: [] },      // LVL-011: every refused player command
+    completed: false,             // level finished normally -> debrief
+    lastDeadlockScanS: 0,
   };
 
   // each point's resting position (captured from the shipped layout)
@@ -1231,6 +1647,16 @@ const sim = (function () {
     state.failedCircuits = new Set();
     state.hazards = [];
     state.frozen = false;
+    state.level = null;
+    state.spawned = [];
+    state.score = {
+      trainsCleared: 0, trainsScheduled: 0, delayWeighted: 0,
+      avoidableStops: 0, brakeEvents: 0, precedencePenalties: 0,
+      avoidableLog: [], precedenceLog: [], perTrain: {}, finalized: false,
+    };
+    state.audit = { refusals: [] };
+    state.completed = false;
+    state.lastDeadlockScanS = 0;
     state.blocks = { 'BLOCK EAST': 'LINE_CLOSED', 'BLOCK WEST': 'LINE_CLOSED' };
     state.blockTimers = { 'BLOCK EAST': { askTimerS: 0, arrivalTimerS: 0 }, 'BLOCK WEST': { askTimerS: 0, arrivalTimerS: 0 } };
     // route runtime states keyed by route id (ILK-010); released[]/overlapHeld
@@ -1280,6 +1706,8 @@ const sim = (function () {
         return out;
       },
       occupied: (c) => occ.has(c),
+      // SIG-050: the standing train(s) physically occupying a circuit
+      occupants: (c) => state.trains.filter(t => !t.despawned && t.occupiedCircuits.indexOf(c) !== -1),
       point: (id) => layout.point(id),
       routeEndsAtBuffer: (id) => layout.routeEndsAtBuffer(layout.route(id)),
       signal: (id) => layout.signal(id),
@@ -1317,9 +1745,21 @@ const sim = (function () {
   }
 
   /* ---- player-facing interlocking commands (INP) ---- */
-  function requestRoute(routeId) { return interlock.requestRoute(routeId, st()); }
-  function cancelRoute(routeId) { return interlock.cancelRoute(routeId, st()); }
-  function throwPoint(pid, target) { return interlock.throwPoint(pid, target, st()); }
+  function requestRoute(routeId) {
+    const res = interlock.requestRoute(routeId, st());
+    if (!res.ok) auditRefusal(res.code, res.message);
+    return res;
+  }
+  function cancelRoute(routeId) {
+    const res = interlock.cancelRoute(routeId, st());
+    if (!res.ok) auditRefusal(res.code, res.message);
+    return res;
+  }
+  function throwPoint(pid, target) {
+    const res = interlock.throwPoint(pid, target, st());
+    if (!res.ok) auditRefusal(res.code, res.message);
+    return res;
+  }
 
   function addTrain(cfg) {
     const cls = CONST.TRAIN_CLASSES[cfg.class];
@@ -1342,9 +1782,18 @@ const sim = (function () {
       targetSpeedMps: 0,
       state: 'STOPPED',
       callingOnAuthority: false,
+      callingOnCoupled: false,           // SIG-053: coupled in, at rest, short of the train ahead
+      dwellS: 0,                        // SIG-051.5: seconds at a stand
       brakingForRed: false,
       despawned: false,
       occupiedCircuits: [],
+      // STEP 8 timetable/scoring tracking (TRN-050, SCO-010)
+      schedArrivalS: cfg.schedArrivalS != null ? cfg.schedArrivalS : null,
+      schedDepartureS: cfg.schedDepartureS != null ? cfg.schedDepartureS : null,
+      arriveM: cfg.arriveM != null ? cfg.arriveM : null,     // platform stop (path metres)
+      departM: cfg.departM != null ? cfg.departM : null,     // Advanced Starter (path metres)
+      actualArrivalS: null, actualDepartureS: null, delayMin: 0,
+      brakeSnapshot: null, scored: false,
     });
     updateOccupancy();
   }
@@ -1397,21 +1846,251 @@ const sim = (function () {
      not yet moved in the same tick. */
   function tick() {
     if (state.frozen) return;
-    consumeIntents();      // 1. step 8: player intent queue (no-op until then)
-    tickTimers();          // 2. point swing, route locking, approach lock, block instruments
-    signalling.computeAspects(st());   // 3. derive every aspect
-    driveTrains();         // 4. each driver sets target speed
-    moveTrains();          // 5. integrate physics
-    updateOccupancy();     // 6. recompute circuit occupancy from extents
-    updateBlocks();        // 7. BLK-021: trains crossing AS signals flip the instrument
-    sectionalRelease();    // 8. step 7: release route segments behind trains
-    detectHazards();       // 9. SPAD / collision / derailment / deadlock
-    updateScoring();       // 10. step 8: delay / throughput accumulators
-    advanceClock();        // 11. gameTime += DT
+    spawnScheduled();      // 1. TRN-050: spawn trains at their timetabled entry time
+    consumeIntents();      // 2. step 8: player intent queue (no-op until then)
+    tickTimers();          // 3. point swing, route locking, approach lock, block instruments
+    signalling.computeAspects(st());   // 4. derive every aspect
+    driveTrains();         // 5. each driver sets target speed
+    moveTrains();          // 6. integrate physics
+    updateOccupancy();     // 7. recompute circuit occupancy from extents
+    updateBlocks();        // 8. BLK-021: trains crossing AS signals flip the instrument
+    sectionalRelease();    // 9. step 7: release route segments behind trains
+    detectHazards();       // 10. SPAD / collision / derailment / deadlock
+    updateScoring();       // 11. step 8: delay / throughput / smoothness accumulators
+    advanceClock();        // 12. gameTime += DT
   }
 
   function consumeIntents() {}        // step 8 (SIM-030)
-  function updateScoring() {}         // step 8 (SCO-010)
+
+  /* ---- level lifecycle (LVL-001, TRN-050, SCO-010) ---- */
+  function loadLevel(levelOrId) {
+    const lv = (typeof levelOrId === 'object' && levelOrId) ? levelOrId : timetable.levelById(levelOrId);
+    if (!lv) return { ok: false, message: 'No such level' };
+    reset(lv.seed);
+    state.level = lv;
+    state.score.trainsScheduled = lv.trains.length;
+    for (const b in (lv.initialBlocks || {})) state.blocks[b] = lv.initialBlocks[b];
+    return { ok: true, level: lv };
+  }
+
+  function spawnScheduled() {
+    const lv = state.level;
+    if (!lv) return;
+    for (const row of lv.trains) {
+      if (state.spawned.indexOf(row.id) !== -1 || row.entryS > state.gameTime) continue;
+      const cfg = timetable.resolve(row);
+      // TRN-061: hold at the block boundary while the entry circuit is occupied.
+      // A following train must not be spawned into a section another train is
+      // still occupying, or FAI-020 would fire on the entry tick.
+      const entryCircuit = trains.edge(cfg.path[0]).circuitId;
+      if (occupiedSet().has(entryCircuit)) continue;
+      state.spawned.push(row.id);
+      addTrain({
+        id: cfg.id, name: cfg.name, class: cfg.class,
+        direction: cfg.direction, path: cfg.path, headDistM: 0,
+        speedMps: motion.lineSpeed({ maxSpeedKph: CONST.TRAIN_CLASSES[cfg.class].maxSpeedKph }, cfg.path, 0),
+        schedArrivalS: cfg.schedArrivalS, schedDepartureS: cfg.schedDepartureS,
+        arriveM: cfg.arriveM, departM: cfg.departM,
+      });
+    }
+  }
+
+  /* SCO-010: delay of a single train, whole minutes floored at 0, measured at
+     despawn (or level end for trains still present). A train that has neither
+     arrived nor departed by `now` is counted late as of `now`. */
+  function trainDelayMin(t, now) {
+    const sched = t.schedDepartureS != null ? t.schedDepartureS : t.schedArrivalS;
+    const actual = t.actualDepartureS != null ? t.actualDepartureS
+      : (t.actualArrivalS != null ? t.actualArrivalS : now);
+    if (sched == null) return 0;
+    return scoring.delayMinutes(actual, sched);
+  }
+
+  /* SCO-010/020/030/031: per-tick scoring. Runs only when a level is loaded so
+     the T01-T21 suite (which drives raw sim state) is unaffected. */
+  function updateScoring() {
+    const lv = state.level;
+    if (!lv) return;
+    const score = state.score;
+    const now = state.gameTime;
+
+    for (const t of state.trains) {
+      if (t.despawned) {
+        if (!t.scored) { t.scored = true; finishTrain(t, now); }
+        continue;
+      }
+      // actual arrival = the moment the head reaches the platform stop
+      if (t.arriveM != null && t.actualArrivalS == null && t.headDistM >= t.arriveM)
+        t.actualArrivalS = now;
+      // actual departure = the moment the head crosses the Advanced Starter
+      if (t.departM != null && t.actualDepartureS == null && t.headDistM >= t.departM)
+        t.actualDepartureS = now;
+      trackBrakeEvents(t, now);
+    }
+
+    scanPrecedence(now);
+    scanDeadlock(now);
+
+    if (!score.finalized && lv.durationS && now >= lv.durationS) {
+      score.finalized = true;
+      for (const t of state.trains) if (!t.despawned && !t.scored) { t.scored = true; finishTrain(t, now); }
+    }
+    // level complete: all scheduled trains cleared, or the clock ran out
+    const allDone = state.spawned.length >= lv.trains.length &&
+      state.trains.every(t => t.scored || t.despawned);
+    if (!state.frozen && (score.finalized || allDone)) state.completed = true;
+  }
+
+  function finishTrain(t, now) {
+    const score = state.score;
+    const w = scoring.weight(CONST.TRAIN_CLASSES[t.class].priority);
+    const d = trainDelayMin(t, now);
+    t.delayMin = d;
+    score.delayWeighted += d * w;
+    score.trainsCleared++;
+    score.perTrain[t.id] = {
+      name: t.name, class: t.class, priority: t.priority,
+      delayMin: d, delayWeight: w, cleared: true,
+      schedArrival: t.schedArrivalS, actualArrival: t.actualArrivalS,
+      schedDeparture: t.schedDepartureS, actualDeparture: t.actualDepartureS,
+    };
+  }
+
+  /* SCO-030/031 (smoothness): a stop at a Red that was avoidable is penalised,
+     and a brake-for-red that recovered before stopping is an unnecessary brake
+     event. SCO-031 precedence errors accrue from scanPrecedence. */
+  function trackBrakeEvents(t, now) {
+    const ns = motion.nearestSignalAhead(t.path, t.headDistM);
+    if (t.brakingForRed && t.brakeSnapshot == null) {
+      t.brakeSnapshot = {
+        time: now, headDistM: t.headDistM, signalId: ns ? ns.id : null,
+        avoidable: routeAheadWasClear(ns ? ns.id : null, t),
+        open: false, stopped: false,
+      };
+    }
+    if (t.brakeSnapshot && t.brakingForRed) t.brakeSnapshot.open = true;
+
+    // recovered before stopping -> unnecessary brake event (route cleared late)
+    if (t.brakeSnapshot && !t.brakingForRed && t.brakeSnapshot.open && !t.brakeSnapshot.stopped) {
+      if (t.speedMps > 0.05) state.score.brakeEvents++;
+      t.brakeSnapshot = null;
+    }
+    // came to a stand at the Red
+    if (t.brakeSnapshot && t.brakingForRed && t.speedMps < 0.05 && !t.brakeSnapshot.stopped) {
+      t.brakeSnapshot.stopped = true;
+      t.brakeSnapshot.stopTime = now;
+      if (t.brakeSnapshot.avoidable) {
+        state.score.avoidableStops++;
+        state.score.avoidableLog.push({
+          trainId: t.id, signalId: t.brakeSnapshot.signalId, at: now,
+        });
+      }
+    }
+    if (t.brakeSnapshot && !t.brakingForRed && t.brakeSnapshot.stopped) t.brakeSnapshot = null;
+  }
+
+  /* SCO-030 detection: at the moment the train entered its braking distance,
+     could a route from that signal have been set with no conflict and no
+     occupancy? If yes the stand was avoidable. An approach-locked route still
+     conflicts, so a late cancellation is NOT counted avoidable. */
+  function routeAheadWasClear(signalId, train) {
+    if (!signalId) return false;
+    const ns = layout.signal(signalId);
+    if (!ns || ns.type === 'DISTANT') return false;
+    for (const r of layout.getRoutes()) {
+      if (r.fromSignal !== signalId || r.class !== 'MAIN') continue;
+      if (st().conflictsWith(r.id).length) continue;
+      const def = layout.route(r.id);
+      let clear = true;
+      for (const c of def.circuitIds) if (st().occupied(c)) { clear = false; break; }
+      if (!clear) continue;
+      const bn = layout.signalBlockName(ns);
+      if (bn && st().blockState(bn) !== 'LINE_CLEAR_GRANTED') continue;
+      return true;
+    }
+    return false;
+  }
+
+  /* SCO-031: precedence error. Every scan, for each train held at a Red signal
+     whose EVERY candidate route is blocked by another train's occupied route,
+     if the blocker is lower priority (higher number) record once per pair. */
+  function scanPrecedence(now) {
+    const seen = state.score.precedenceLog.map(e => e.trainId + '>' + e.blockedBy);
+    for (const t of state.trains) {
+      if (t.despawned || t.speedMps > 0.05) continue;
+      const ns = motion.nearestSignalAhead(t.path, t.headDistM);
+      if (!ns || layout.signal(ns.id).aspect !== 'RED' || layout.signal(ns.id).type === 'DISTANT') continue;
+      const candidates = layout.getRoutes().filter(r => r.fromSignal === ns.id && r.class === 'MAIN');
+      if (!candidates.length) continue;
+      // every candidate blocked by some train's held route
+      const blockers = {};
+      let blocked = 0;
+      for (const c of candidates) {
+        const def = layout.route(c.id);
+        const by = [];
+        for (const rid in state.routes) {
+          const rt = state.routes[rid];
+          if (rt.state !== 'LOCKED_AND_PROVED' && rt.state !== 'OCCUPIED') continue;
+          const other = layout.route(rid);
+          if (!other) continue;
+          if (layout.conflicts(def, other)) by.push(rt.trainId);
+        }
+        const byOccup = [];
+        for (const train of state.trains) {
+          if (train.despawned) continue;
+          for (const cc of def.circuitIds)
+            if (train.occupiedCircuits.indexOf(cc) !== -1 && byOccup.indexOf(train.id) === -1) { byOccup.push(train.id); break; }
+        }
+        if (by.length || byOccup.length) { blocked++; for (const b of by.concat(byOccup)) blockers[b] = true; }
+      }
+      if (blocked !== candidates.length) continue;
+      for (const bid in blockers) {
+        const bt = state.trains.find(x => x.id == bid);
+        if (!bt || bt.priority >= t.priority) continue;      // blocker must be LOWER priority
+        const key = t.id + '>' + bid;
+        if (seen.indexOf(key) !== -1) continue;
+        const high = scoring.weight(t.priority), low = scoring.weight(bt.priority);
+        state.score.precedenceLog.push({ at: now, trainId: t.id, trainName: t.name, priority: t.priority, blockedBy: bid, blockedByName: bt.name, blockerPriority: bt.priority, penalty: scoring.precedencePenalty(low, high) });
+        state.score.precedencePenalties += scoring.precedencePenalty(low, high);
+      }
+    }
+  }
+
+  /* FAI-041: deadlock scan every DEADLOCK_SCAN_S. Build a wait-for graph — a
+     train H points at a train B if H is held at a Red and every route from its
+     signal is blocked by B — and flag any cycle. */
+  function scanDeadlock(now) {
+    if (now - state.lastDeadlockScanS < CONST.DEADLOCK_SCAN_S) return;
+    state.lastDeadlockScanS = now;
+    const edges = {};
+    for (const t of state.trains) {
+      if (t.despawned || t.speedMps > 0.05) continue;
+      const ns = motion.nearestSignalAhead(t.path, t.headDistM);
+      if (!ns || layout.signal(ns.id).aspect !== 'RED') continue;
+      const candidates = layout.getRoutes().filter(r => r.fromSignal === ns.id && r.class === 'MAIN');
+      if (!candidates.length) continue;
+      let fullyBlocked = true, blockers = [];
+      for (const c of candidates) {
+        const def = layout.route(c.id);
+        const by = [];
+        for (const train of state.trains) {
+          if (train.id === t.id || train.despawned) continue;
+          if (train.occupiedCircuits.some(cc => def.circuitIds.indexOf(cc) !== -1 ||
+              def.overlapCircuitIds.indexOf(cc) !== -1)) by.push(train.id);
+        }
+        if (by.length) for (const b of by) if (blockers.indexOf(b) === -1) blockers.push(b);
+        else fullyBlocked = false;
+      }
+      if (fullyBlocked && blockers.length) edges[t.id] = blockers;
+    }
+    const cycle = scoring.findWaitCycle(edges);
+    if (cycle && cycle.length > 1) {
+      state.hazards.push({
+        type: 'DEADLOCK', trainIds: cycle.map(String), time: now,
+      });
+      state.frozen = true;
+    }
+  }
 
   function tickTimers() {
     tickPoints();
@@ -1562,9 +2241,9 @@ const sim = (function () {
      refused while TRAIN_ON_LINE), and grant a neighbour's inbound request. */
   function askLineClear(blockName) {
     const cur = state.blocks[blockName];
-    if (cur === 'TRAIN_ON_LINE') return { ok: false, code: 'BLOCK_OCCUPIED', message: 'LINE CLEAR REFUSED — ' + blockName + ' is occupied (TRAIN ON LINE)' };
-    if (cur === 'LINE_CLEAR_ASKED') return { ok: false, code: 'ALREADY_ASKED', message: 'LINE CLEAR ALREADY ASKED — ' + blockName };
-    if (cur === 'LINE_CLEAR_GRANTED') return { ok: false, code: 'ALREADY_GRANTED', message: blockName + ' already has LINE CLEAR' };
+    if (cur === 'TRAIN_ON_LINE') { const r = { ok: false, code: 'BLOCK_OCCUPIED', message: 'LINE CLEAR REFUSED — ' + blockName + ' is occupied (TRAIN ON LINE)' }; auditRefusal(r.code, r.message); return r; }
+    if (cur === 'LINE_CLEAR_ASKED') { const r = { ok: false, code: 'ALREADY_ASKED', message: 'LINE CLEAR ALREADY ASKED — ' + blockName }; auditRefusal(r.code, r.message); return r; }
+    if (cur === 'LINE_CLEAR_GRANTED') { const r = { ok: false, code: 'ALREADY_GRANTED', message: blockName + ' already has LINE CLEAR' }; auditRefusal(r.code, r.message); return r; }
     state.blocks[blockName] = 'LINE_CLEAR_ASKED';
     const lo = CONST.LINE_CLEAR_REPLY_S[0], hi = CONST.LINE_CLEAR_REPLY_S[1];
     state.blockTimers[blockName].askTimerS = lo + state.rng() * (hi - lo);
@@ -1572,8 +2251,11 @@ const sim = (function () {
   }
 
   function grantLineClear(blockName) {
-    if (state.blocks[blockName] !== 'LINE_CLEAR_ASKED')
-      return { ok: false, code: 'NO_REQUEST', message: 'No outstanding request for ' + blockName };
+    if (state.blocks[blockName] !== 'LINE_CLEAR_ASKED') {
+      const r = { ok: false, code: 'NO_REQUEST', message: 'No outstanding request for ' + blockName };
+      auditRefusal(r.code, r.message);
+      return r;
+    }
     state.blocks[blockName] = 'LINE_CLEAR_GRANTED';
     state.blockTimers[blockName].askTimerS = 0;
     return { ok: true, message: blockName + ' — LINE CLEAR GRANTED' };
@@ -1586,13 +2268,59 @@ const sim = (function () {
   function driveTrains() {
     for (const t of state.trains) {
       if (t.despawned) continue;
-      const target = motion.targetSpeed(t, t.path, t.headDistM);
+      // SIG-051.5 dwell: whole seconds standing still (drives calling-on).
+      t.dwellS = t.speedMps < 0.05 ? t.dwellS + CONST.DT : 0;
+      const ns = motion.nearestSignalAhead(t.path, t.headDistM);
+      // SIG-050/054: a train standing at a Red with the calling-on lamp lit is
+      // given calling-on authority; it lasts for the whole creep and ends when
+      // the train comes to rest short of the standing train (SIG-053), when it
+      // is marked coupled and resumes normal signal working.
+      if (ns && ns.aspect === 'RED' && ns.sig.callingOnLit) t.callingOnAuthority = true;
+      if (t.callingOnAuthority) {
+        const stopM = callingOnStopPoint(t);
+        if (t.speedMps < 0.05 && stopM != null && t.headDistM >= stopM - 0.5) {
+          t.callingOnAuthority = false;
+          t.callingOnCoupled = true;
+        } else if (t.speedMps < 0.05 && !(ns && ns.sig.callingOnLit)) {
+          t.callingOnAuthority = false;   // lamp went out while at rest
+        }
+      }
+      if (t.speedMps > 0.05) t.callingOnCoupled = false;   // moved off: coupling over
+      // TRN-062: the occupied set for the circuit-boundary hold must exclude the
+      // train itself — its own body legitimately straddles boundaries.
+      let occ = null;
+      for (const o of state.trains) {
+        if (o === t || o.despawned) continue;
+        if (!occ) occ = new Set();
+        for (const c of o.occupiedCircuits) occ.add(c);
+      }
+      const callOnStopM = t.callingOnAuthority ? callingOnStopPoint(t) : null;
+      const target = motion.targetSpeed(t, t.path, t.headDistM, occ, callOnStopM);
       t.targetSpeedMps = target;
       if (target > t.speedMps + 0.001)      t.speedMps = Math.min(target, t.speedMps + t.accel * CONST.DT);
       else if (target < t.speedMps - 0.001) t.speedMps = Math.max(target, t.speedMps - t.brakeSvc * CONST.DT);
       t.speedMps = Math.max(0, t.speedMps);
       t.state = t.speedMps < 0.05 ? 'STOPPED' : (target < t.speedMps - 0.001 ? 'BRAKING' : 'RUNNING');
     }
+  }
+
+  // SIG-053: where a calling-on train must come to rest — short of the nearest
+  // standing train ahead on the same path (its tail minus CALL_ON_GAP_M), else
+  // its own scheduled platform stop.
+  function callingOnStopPoint(t) {
+    let best = null;
+    for (const o of state.trains) {
+      if (o === t || o.despawned || o.speedMps > 0.05) continue;
+      if (o.headDistM <= t.headDistM + 1) continue;
+      if (o.path.length !== t.path.length) continue;
+      let same = true;
+      for (let k = 0; k < o.path.length; k++) if (o.path[k] !== t.path[k]) { same = false; break; }
+      if (!same) continue;
+      const stopM = o.headDistM - o.lengthM - CONST.CALL_ON_GAP_M;
+      if (best == null || stopM < best) best = stopM;
+    }
+    if (best != null) return best;
+    return t.arriveM != null ? t.arriveM : null;
   }
 
   function moveTrains() {
@@ -1606,30 +2334,174 @@ const sim = (function () {
 
   /* FAI-010: SPAD — head crosses a signal node while that signal shows RED and
      the train holds no calling-on / manual authority for it. Distants can
-     never show RED (T09) so are structurally excluded. */
+     never show RED (T09) so are structurally excluded. FAI-020: collision —
+     two trains' extents occupy the same circuit. FAI-030: derailment — a train
+     reaches a BUFFER at speed > 0 (points cannot move under a train, ILK-020).
+     Any hazard freezes the sim instantly (FAI-050). */
   function detectHazards() {
     for (const t of state.trains) {
       if (t.despawned) continue;
       const crossed = motion.crossedSignals(t.path, t.prevHeadDistM, t.headDistM);
       for (const c of crossed) {
         if (c.aspect === 'RED' && !t.callingOnAuthority) {
-          state.hazards.push({
+          failHazard({
             type: 'SPAD', trainId: t.id, signalId: c.id,
             time: state.gameTime, speedKph: Math.round(motion.kph(t.speedMps)),
           });
-          state.frozen = true;
-          break;
+          return;
         }
       }
     }
+    // FAI-020: two trains sharing an occupied circuit is a collision (the block
+    // design keeps like-direction trains a full circuit apart). Calling-on is
+    // the one lawful exception — the called-on train creeps into the berth the
+    // standing train occupies (SIG-053) — but only until its nose reaches the
+    // standing train's tail: failing to stop short is still a collision.
+    for (let i = 0; i < state.trains.length; i++) {
+      const a = state.trains[i];
+      if (a.despawned) continue;
+      for (let j = i + 1; j < state.trains.length; j++) {
+        const b = state.trains[j];
+        if (b.despawned) continue;
+        const aAuth = a.callingOnAuthority || a.callingOnCoupled;
+        const bAuth = b.callingOnAuthority || b.callingOnCoupled;
+        if (aAuth || bAuth) {
+          const caller = aAuth ? a : b;
+          const stand = aAuth ? b : a;
+          if (caller.path.length === stand.path.length) {
+            let same = true;
+            for (let k = 0; k < caller.path.length; k++) if (caller.path[k] !== stand.path[k]) { same = false; break; }
+            if (same && caller.headDistM > stand.headDistM - stand.lengthM) {
+              failHazard({
+                type: 'COLLISION', trainId: caller.id, otherTrainId: stand.id,
+                circuitId: stand.occupiedCircuits[stand.occupiedCircuits.length - 1] || '',
+                time: state.gameTime,
+                speedKph: Math.round(motion.kph(caller.speedMps)),
+              });
+              return;
+            }
+          }
+          continue;   // lawful sharing on calling-on authority
+        }
+        for (const c of a.occupiedCircuits) {
+          if (b.occupiedCircuits.indexOf(c) !== -1) {
+            failHazard({
+              type: 'COLLISION', trainId: a.id, otherTrainId: b.id,
+              circuitId: c, time: state.gameTime,
+              speedKph: Math.max(Math.round(motion.kph(a.speedMps)), Math.round(motion.kph(b.speedMps))),
+            });
+            return;
+          }
+        }
+      }
+    }
+    // FAI-030: train at a dead-end BUFFER with speed still above zero
+    for (const t of state.trains) {
+      if (!t.despawned || t.speedMps <= 0.05) continue;
+      const lastEdge = t.path[t.path.length - 1];
+      const e = trains.edge(lastEdge);
+      if (e && layout.node(e.to).kind === 'BUFFER') {
+        failHazard({
+          type: 'DERAILMENT', trainId: t.id, bufferId: layout.node(e.to).id,
+          time: state.gameTime, speedKph: Math.round(motion.kph(t.speedMps)),
+        });
+        return;
+      }
+    }
+  }
+
+  function failHazard(h) {
+    state.hazards.push(h);
+    state.frozen = true;
+  }
+
+  /* FAI-050/051: a plain-language, state-generated explanation of a hazard.
+     The numbers (distances, speeds, times, braking distance) come from the
+     actual simulation records, not a canned string. */
+  function describeHazard(h) {
+    const clock = (s) => {
+      const base = state.level && state.level.startTime ? parseClock(state.level.startTime) : 10 * 3600;
+      const t = base + Math.floor(s);
+      const hh = Math.floor(t / 3600) % 24, mm = Math.floor(t / 60) % 60, ss = t % 60;
+      return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    };
+    const train = state.trains.find(x => x.id == h.trainId) ||
+      state.trains.find(x => x.id == h.otherTrainId);
+    const name = train ? train.name : ('train ' + h.trainId);
+    const v = h.speedKph || 0;
+    const b = train ? train.brakeSvc : 0.7;
+    const stopM = Math.round(v * v / (2 * b * 129.6) + CONST.REACTION_S * v / 3.6);
+
+    if (h.type === 'SPAD') {
+      return {
+        what: 'SPAD — ' + name + ' (' + h.trainId + ') passed signal ' + h.signalId + ' at danger.',
+        rule: 'A train may not pass a signal showing Red.',
+        why: h.signalId + ' returned to Red while ' + h.trainId + ' was approaching. At the moment of crossing it was travelling at ' + h.speedKph + ' km/h and needed about ' + stopM + ' m to stop from that speed.',
+        advise: 'Do not cancel a cleared route with a train inside its braking distance. Set the alternative route first, or let the train in and re-route it from the platform.',
+      };
+    }
+    if (h.type === 'COLLISION') {
+      return {
+        what: 'COLLISION — ' + name + ' (' + h.trainId + ') collided with train ' + h.otherTrainId + ' on circuit ' + h.circuitId + '.',
+        rule: 'Two trains may not occupy the same track circuit.',
+        why: 'At ' + clock(h.time) + ' both trains were detected on ' + h.circuitId + ' at up to ' + h.speedKph + ' km/h.',
+        advise: 'Keep at least one clear circuit between trains. Signalling must never let a second train onto an occupied line.',
+      };
+    }
+    if (h.type === 'DERAILMENT') {
+      return {
+        what: 'DERAILMENT — ' + name + ' (' + h.trainId + ') struck buffer ' + h.bufferId + ' at ' + h.speedKph + ' km/h.',
+        rule: 'A train must come to a stand before a dead-end buffer.',
+        why: 'The train reached the buffer still moving at ' + h.speedKph + ' km/h instead of being stopped at the shunt signal.',
+        advise: 'Set the shunting route and let the train come to a stand inside its braking distance before the buffer.',
+      };
+    }
+    if (h.type === 'DEADLOCK') {
+      return {
+        what: 'DEADLOCK — trains ' + (h.trainIds || []).join(' and ') + ' are each waiting on the other.',
+        rule: 'No train may be left with every route blocked by another train with no escape.',
+        why: 'At ' + clock(h.time) + ' a wait-for cycle was detected: each train\u2019s only available routes are blocked by another train in the cycle.',
+        advise: 'Cancel one route or set an alternative road to break the cycle, or move one train out of the way.',
+      };
+    }
+    return { what: 'Failure', rule: '', why: '', advise: '' };
+  }
+
+  function parseClock(t) {
+    const p = t.split(':').map(Number);
+    return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
+  }
+
+  /* LVL-011: every refused command is logged for the debrief */
+  function auditRefusal(code, message) {
+    state.audit.refusals.push({ at: state.gameTime, code, message });
   }
 
   return {
     state, reset, addTrain, updateOccupancy, occupiedSet, tick,
     requestRoute, cancelRoute, throwPoint, st,
     askLineClear, grantLineClear, blockState: (b) => state.blocks[b],
+    loadLevel, spawnScheduled, describeHazard, trainDelayMin,
+    score: () => liveScore(),
   };
 })();
+
+  /* SCO-040: live, explainable score breakdown — the same numbers the HUD
+     hover shows. Zero when safety fails. */
+  function liveScore() {
+    const s = sim.state.score;
+    const p = scoring.punctuality(s.delayWeighted);
+    const t = scoring.throughput(s.trainsCleared, s.trainsScheduled);
+    const sm = scoring.smoothness(s.avoidableStops, s.brakeEvents);
+    const total = sim.state.frozen ? 0 : scoring.total(p, t, sm, s.precedencePenalties);
+    return {
+      punctuality: p, throughput: t, smoothness: sm,
+      precedencePenalties: s.precedencePenalties,
+      total, delays: s.delayWeighted, cleared: s.trainsCleared,
+      scheduled: s.trainsScheduled, avoidableStops: s.avoidableStops,
+      brakeEvents: s.brakeEvents,
+    };
+  }
 
 /* ----------------------------------------------------------------------------
    13. tests — in-file self-test harness (grows each step; run ?test=1)
@@ -1770,7 +2642,9 @@ const tests = (function () {
           const rid = { A: 'R_A', B: 'R_B', C: 'R_C', D: 'R_D' }[sig];
           return rid ? Object.assign({}, routeDefs[rid], { state: states[rid] }) : null;
         },
-        occupied: (c) => occ.has(c),
+      occupied: (c) => occ.has(c),
+      // SIG-050: the standing train(s) physically occupying a circuit
+      occupants: (c) => state.trains.filter(t => !t.despawned && t.occupiedCircuits.indexOf(c) !== -1),
         point: () => ({ position: 'NORMAL', moving: false }),
         signal: (id) => sigs[id] || null,
       };
@@ -1974,6 +2848,103 @@ const tests = (function () {
       return res.ok && sim.state.hazards.length === 0 && t.headDistM < 800 && t.speedMps < 0.05;
     });
 
+    // ---- STEP 7.5: calling-on (SIG-050..054) ----
+    // helpers for the calling-on tests: a standing train at the PF2 platform
+    // stop (arriveM, its berth TC_UM4) and a would-be caller stopped in TC_BH1
+    // just short of the home signal H1 (2800 m on the same UP path).
+    function callOnStand() {
+      const p = timetable.resolve({ direction: 'UP', platform: 'PF2' });
+      sim.addTrain({ id: 900, name: 'STAND', class: 'RAJDHANI', direction: 'UP',
+        path: p.path, headDistM: p.arriveM - 5, speedMps: 0 });
+    }
+    function callOnCaller() {
+      const p = timetable.resolve({ direction: 'UP', platform: 'PF2' });
+      sim.addTrain({ id: 901, name: 'CALLER', class: 'SHATABDI', direction: 'UP',
+        path: p.path, headDistM: 2780, speedMps: 0 });
+      const c = sim.state.trains.find(x => x.id === 901);
+      c.dwellS = CONST.CALL_ON_DWELL_S;                       // 60 s at a stand
+      return c;
+    }
+    check('T22 calling-on gates: each SIG-051 condition, violated alone, refuses', () => {
+      // control: all conditions hold -> calling-on clears
+      sim.reset(2222); callOnStand(); callOnCaller();
+      const ok = sim.requestRoute('R_CO_H1_PF2');
+      // no train standing at the origin signal (SIG-051.1/2)
+      sim.reset(2223); callOnStand();
+      const noTrain = sim.requestRoute('R_CO_H1_PF2');
+      // not at a stand 60 s yet (SIG-051.5)
+      sim.reset(2224); callOnStand(); const slow = callOnCaller(); slow.dwellS = 0;
+      const dwell = sim.requestRoute('R_CO_H1_PF2');
+      // berth not occupied (SIG-051.3)
+      sim.reset(2225); callOnCaller();
+      const empty = sim.requestRoute('R_CO_H1_PF2');
+      return ok.ok && noTrain.code === 'CALL_ON_NO_TRAIN' && dwell.code === 'CALL_ON_DWELL' &&
+        empty.code === 'CALL_ON_EMPTY';
+    });
+    check('T23 calling-on movement is not a SPAD and stops short (SIG-053/054)', () => {
+      sim.reset(2323); callOnStand(); const caller = callOnCaller();
+      const set = sim.requestRoute('R_CO_H1_PF2');
+      for (let i = 0; i < 10 && sim.state.routes['R_CO_H1_PF2'].state !== 'LOCKED_AND_PROVED'; i++) sim.tick();
+      let guard = 0, crossed = false, creep = 0;
+      while (guard++ < 120000 && !sim.state.frozen && !caller.callingOnCoupled) {
+        sim.tick();
+        if (caller.headDistM > 2800) crossed = true;         // H1 at 2800
+        creep = Math.max(creep, motion.kph(caller.speedMps));
+      }
+      const stand = sim.state.trains.find(x => x.id === 900);
+      const tail = stand.headDistM - stand.lengthM;
+      return set.ok && crossed && creep <= CONST.CALL_ON_SPEED_KPH + 0.01 &&
+        caller.headDistM <= tail - CONST.CALL_ON_GAP_M + 0.5 &&
+        caller.callingOnCoupled && sim.state.hazards.length === 0;   // no SPAD, no collision
+    });
+
+    // ---- STEP 8: timetable, scoring, deadlock (T40-T44, SCO-010..040, FAI-041) ----
+    check('T40 timetable spawn at entry time (TRN-050)', () => {
+      sim.reset(2222);
+      const lv = sim.loadLevel(2);                       // Rajdhani UP entryS 0
+      sim.tick();
+      const t = sim.state.trains.find(x => x.id === 12951);
+      return lv.ok && !!t && t.headDistM < 1 && t.speedMps > 0 &&
+        t.arriveM === 3600 && t.departM === 4040 && t.schedArrivalS === 200;
+    });
+    check('T41 delay measured at despawn, whole minutes floored (SCO-010)', () => {
+      sim.reset(2323);
+      sim.loadLevel(2);
+      sim.tick();                                            // spawn the Rajdhani
+      const t = sim.state.trains[0];
+      // actual 500 s vs scheduled departure 200 s => 300 s late = 5 whole minutes
+      t.schedArrivalS = 100; t.actualArrivalS = 430;
+      t.schedDepartureS = 200; t.actualDepartureS = 500;
+      const late = sim.trainDelayMin(t, 600);
+      const early = sim.trainDelayMin(
+        Object.assign({}, t, { actualArrivalS: 50, actualDepartureS: 150 }), 600);
+      return late === 5 && early === 0;
+    });
+    check('T42 weighted punctuality score (SCO-020)', () => {
+      // 3 min of Rajdhani (w=10) + 30 min of Goods (w=1) => 1000 - 60
+      const weighted = 3 * scoring.weight(1) + 30 * scoring.weight(6);
+      return scoring.weight(1) === 10 && scoring.weight(6) === 1 &&
+        weighted === 60 && scoring.punctuality(weighted) === 940 &&
+        scoring.throughput(2, 4) === 200 &&                 // 400 x 0.5
+        scoring.smoothness(1, 2) === 286;                    // 300 - 10 - 4
+    });
+    check('T43 avoidable stop detected (SCO-030)', () => {
+      sim.reset(2525);
+      sim.loadLevel(2);
+      // no route set for the incoming train: at braking entry the road ahead is
+      // clear (nothing occupied, no conflict) so its stand at O1 is avoidable
+      let guard = 0;
+      while (guard++ < 20000 && !sim.state.score.avoidableStops) sim.tick();
+      const t = sim.state.trains[0];
+      return sim.state.score.avoidableStops === 1 && t && t.speedMps < 0.05;
+    });
+    check('T44 deadlock wait-for cycle detection (FAI-041)', () => {
+      const cyc = scoring.findWaitCycle({ A: ['B'], B: ['A'] });
+      const chain = scoring.findWaitCycle({ A: ['B'], B: ['C'], C: [] });
+      const self = scoring.findWaitCycle({ A: ['A'], B: [] });
+      return !!cyc && cyc.length === 2 && chain === null && !!self && self.length === 1;
+    });
+
     return results;
   }
 
@@ -2058,6 +3029,43 @@ const render = (function () {
     drawApproachLock(f);
     drawLabels(f);
     drawBoundaryMarkers(f);
+    if (sim.state.frozen && sim.state.hazards.length) drawFailureMarker(f);
+  }
+
+  /* FAI-050: a red X with leader line marks the exact location of the failure
+     so the player sees where it happened, not just a modal. */
+  function drawFailureMarker(f) {
+    const h = sim.state.hazards[0];
+    let cx = W / 2, cy = H / 2;
+    if (h && h.signalId) {
+      const n = layout.node(layout.signal(h.signalId).atNode);
+      [cx, cy] = T(n.x, n.y, f);
+    } else if (h && h.circuitId) {
+      const tc = layout.getCircuits().find(c => c.id === h.circuitId);
+      if (tc && tc.edgeIds.length) {
+        const e = layout.getEdges().find(x => x.id === tc.edgeIds[0]);
+        if (e) {
+          const a = layout.node(e.from), b = layout.node(e.to);
+          [cx, cy] = T((a.x + b.x) / 2, (a.y + b.y) / 2, f);
+        }
+      }
+    } else if (h && h.bufferId) {
+      const n = layout.node(h.bufferId);
+      if (n) [cx, cy] = T(n.x, n.y, f);
+    }
+    const r = 26;
+    ctx.strokeStyle = col.LAMP_RED;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+    ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = col.LAMP_RED;
+    ctx.font = 'bold 12px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText((h ? h.type : 'FAILURE'), cx, cy - r * 2 - 8);
+    ctx.textAlign = 'left';
   }
 
   /* ILK-053: the approach-lock countdown is drawn prominently at the origin
@@ -2520,15 +3528,24 @@ const input = (function () {
   function clickDestination(edge) {
     const from = selection.signalId;
     const to = edge.circuitId;
-    const route = layout.getRoutes().find(r => r.fromSignal === from && r.toBerth === to);
-    if (!route) {
+    const candidates = layout.getRoutes().filter(r => r.fromSignal === from && r.toBerth === to);
+    const main = candidates.find(r => r.class !== 'CALL_ON');
+    const callOn = candidates.find(r => r.class === 'CALL_ON');
+    if (!main && !callOn) {
       ui.showMessage('NO ROUTE — ' + from + ' to ' + to + ' is not a valid road', true);
       selection = null; render.draw();
       return;
     }
-    const res = sim.requestRoute(route.id);
+    const res = main ? sim.requestRoute(main.id) : sim.requestRoute(callOn.id);
     if (res.ok) {
-      ui.showMessage('ROUTE SET — ' + from + ' → ' + route.toBerth + ' (points locking)', false);
+      ui.showMessage('ROUTE SET — ' + from + ' → ' + (main || callOn).toBerth + ' (points locking)', false);
+    } else if (callOn && res.code === 'TRACK_OCCUPIED') {
+      // SIG-052: the berth is occupied, so the main road can never clear. Fall
+      // back to calling-on; its own SIG-051 gates surface the unmet condition
+      // in the message (dwell, no train, shunt off...).
+      const res2 = sim.requestRoute(callOn.id);
+      if (res2.ok) ui.showMessage('CALLING-ON SET — ' + from + ' → ' + callOn.toBerth + ' (berth occupied, creep at 15 km/h)', false);
+      else ui.showMessage(res2.message, true);
     } else {
       ui.showMessage(res.message, true);
     }
@@ -2588,43 +3605,116 @@ const input = (function () {
   console.log('[tests] ' + tPass + '/' + tResults.length + ' passed', tResults);
   status.textContent += '  ·  tests: ' + tPass + '/' + tResults.length;
 
-  // ---- STEP 7: the Rajdhani runs the through road end to end. It brakes in
-  // off BLOCK WEST through D1 (G) / O1 (DY) / H1 (Y) to a stand at the PF2
-  // platform against S2 (RED). Standing in the berth releases H1's overlap, so
-  // the departure road can then be set: Line Clear EAST is asked+granted and
-  // R_S2_AS1 clears; the train runs to AS1, the AS1 road clears, and it leaves
-  // into BLOCK EAST (instrument flips TRAIN_ON_LINE, then LINE_CLOSED). Watch
-  // the section behind the train release as it goes, and cancel H1 late for a
-  // real 120 s approach lock.
-  const UP_PATH = ['E_BWU', 'E_D1_O1', 'E_O1_H1', 'E_H1_P101N', 'E_UM1', 'E_UM2', 'E_UM3', 'E_UM4', 'E_UM5', 'E_UM6', 'E_AS1', 'E_BEU'];
-
-  sim.reset(12345);
-  sim.addTrain({
-    id: 12951, name: 'MUMBAI RAJDHANI', class: 'RAJDHANI',
-    direction: 'UP', path: UP_PATH, headDistM: 0,
-  });
+  // ---- STEP 8: the game loads a level (LVL-001) and runs its timetable. The
+  // boot level (2) is guided: the Rajdhani runs the through road end to end.
+  // It brakes in off BLOCK WEST through D1 (G) / O1 (DY) / H1 (Y) to a stand
+  // at the PF2 platform against S2 (RED). Standing in the berth releases H1's
+  // overlap, so the departure road can then be set: Line Clear EAST is
+  // asked+granted and R_S2_AS1 clears; the train runs to AS1, the AS1 road
+  // clears, and it leaves into BLOCK EAST (TRAIN_ON_LINE, then LINE_CLOSED).
 
   ui.setup();
   input.setup();
   render.setup();
 
-  // BLOCK WEST is pre-granted (the neighbour's inbound request was accepted) so
-  // the reception road O1 can clear; BLOCK EAST is left for the demo to work.
-  sim.state.blocks['BLOCK WEST'] = 'LINE_CLEAR_GRANTED';
-  const demoSet = sim.requestRoute('R_O1_BH1');
-  sim.requestRoute('R_H1_PF2');
-  if (demoSet.ok) ui.showMessage('DEMO — reception to PF2 set; the train brakes in. It will run out again once you have cleared the departure road.', false);
-  else ui.showMessage('DEMO — ' + demoSet.message, true);
-  signalling.computeAspects(sim.st());
+  // ---- persistence (TEC-008): guarded, file:// may block localStorage ----
+  const store = (function () {
+    let data = null;
+    try {
+      data = JSON.parse(localStorage.getItem('sm-progress-v8') || 'null');
+    } catch (e) { data = null; }
+    if (!data || typeof data !== 'object') data = { completed: [], best: {} };
+    function save() {
+      try { localStorage.setItem('sm-progress-v8', JSON.stringify(data)); } catch (e) { /* non-fatal */ }
+    }
+    return { data, save };
+  })();
+  const progress = store.data;
 
-  // scripted continuation: act only when the train stands where we expect and
-  // the player has not already set the road (so player action always wins)
+  // ---- level select + briefing (LVL-010, LVL-002, UI-090) ----
+  const levelMenuEl = document.getElementById('levelmenu');
+  const menuListEl = document.getElementById('levelmenu-list');
+  const briefingEl = document.getElementById('briefing');
+  const failEl = document.getElementById('failmodal');
+  const debriefEl = document.getElementById('debrief');
+
+  function show(id) { document.getElementById(id).classList.add('show'); }
+  function hide(id) { document.getElementById(id).classList.remove('show'); }
+
+  function unlocked(id) {
+    if (id === 1) return true;
+    return progress.completed.indexOf(id - 1) !== -1;
+  }
+
+  function renderLevelMenu() {
+    menuListEl.innerHTML = '';
+    for (const lv of timetable.LEVELS) {
+      const ok = unlocked(lv.id);
+      const row = document.createElement('div');
+      row.className = 'lvrow' + (ok ? '' : ' locked');
+      const best = progress.best[lv.id];
+      const fresh = ok && progress.completed.indexOf(lv.id) === -1;
+      row.innerHTML =
+        '<span class="lvnum">' + lv.id + '</span>' +
+        '<span class="lvname">' + lv.name + '</span>' +
+        (fresh ? '<span class="lvnew">NEW</span>' : '') +
+        (best !== undefined ? '<span class="lvbest">best ' + best + '</span>' : '');
+      if (ok) row.addEventListener('click', () => startLevel(lv.id));
+      menuListEl.appendChild(row);
+    }
+  }
+
+  function showMenu() {
+    app.debriefShown = false;
+    renderLevelMenu();
+    hide('briefing'); hide('failmodal'); hide('debrief');
+    show('levelmenu');
+  }
+
+  document.getElementById('levelsbtn').addEventListener('click', showMenu);
+  document.getElementById('menu-close').addEventListener('click', () => hide('levelmenu'));
+  document.getElementById('briefing-back').addEventListener('click', showMenu);
+  document.getElementById('fail-menu').addEventListener('click', showMenu);
+  document.getElementById('debrief-menu').addEventListener('click', showMenu);
+  document.getElementById('fail-retry').addEventListener('click', () => { hide('failmodal'); app.announced = false; startLevel(app.levelId); });
+  document.getElementById('debrief-next').addEventListener('click', () => { hide('debrief'); startLevel(app.levelId + 1); });
+
+  function startLevel(id) {
+    const lv = timetable.levelById(id);
+    if (!lv || !unlocked(lv.id)) return;
+    app.levelId = id;
+    app.announced = false;
+    app.debriefShown = false;
+    hide('levelmenu'); hide('failmodal'); hide('debrief');
+    sim.loadLevel(lv);
+    signalling.computeAspects(sim.st());
+    app.started = !!lv.guided;                    // guided demo auto-runs; others wait
+    const stage = document.getElementById('stage');
+    stage.textContent = 'LEVEL ' + lv.id + ' — ' + lv.name;
+    document.getElementById('briefing-title').textContent = 'Level ' + lv.id + ' — ' + lv.name;
+    document.getElementById('briefing-text').textContent = lv.briefing;
+    document.getElementById('briefing-rules').innerHTML =
+      '<h3>New here</h3><p>' + (lv.rulesIntroduced || []).join(' · ') + '</p>';
+    show('briefing');
+  }
+  document.getElementById('briefing-start').addEventListener('click', () => {
+    hide('briefing');
+    app.started = true;
+  });
+  // guided continuation for level 2: act only when the train stands where we
+  // expect and the player has not already set the road (player action wins)
   const demo = { stage: 'reception' };
   function demoStep() {
+    const lv = sim.state.level;
+    if (!lv || !lv.guided) return;
     if (sim.state.frozen || demo.stage === 'done') return;
     const t = sim.state.trains.find(x => !x.despawned);
     if (!t) return;
     if (demo.stage === 'reception') {
+      if (sim.state.routes['R_H1_PF2'].state === 'IDLE') {
+        sim.requestRoute('R_O1_BH1');
+        sim.requestRoute('R_H1_PF2');
+      }
       if (t.speedMps < 0.05 && t.headDistM > 3500) {          // standing in the PF2 berth (S2 at 3600)
         demo.stage = 'dispatch';
         if (sim.state.blocks['BLOCK EAST'] !== 'LINE_CLEAR_GRANTED') {
@@ -2690,11 +3780,19 @@ const input = (function () {
   const trainInfo = document.getElementById('traininfo');
   const sigInfo = document.getElementById('siginfo');
   const occSum = document.getElementById('occsum');
+  const scoreEl = document.getElementById('score');
+  const breakdownEl = document.getElementById('scorebreakdown');
+  const trainListEl = document.getElementById('trainlist');
 
   function fmtClock(t) {
-    const s = 10 * 3600 + Math.floor(t);           // level starts 10:00:00 (SIM-021)
+    const base = sim.state.level && sim.state.level.startTime ? clockSec(sim.state.level.startTime) : 10 * 3600;
+    const s = base + Math.floor(t);            // level starts at its startTime (SIM-021)
     const h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60, sec = s % 60;
     return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+  }
+  function clockSec(t) {
+    const p = t.split(':').map(Number);
+    return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
   }
 
   // DBG-003: live per-train telemetry
@@ -2712,6 +3810,98 @@ const input = (function () {
     occSum.textContent = 'circuits: ' + (t.occupiedCircuits.length ? t.occupiedCircuits.join(' ') : '—');
   }
 
+  // SCO-040: score updates live; the hover breakdown shows the real numbers.
+  function updateScore() {
+    if (!sim.state.level) { scoreEl.textContent = 'SCORE —'; return; }
+    const s = sim.score();
+    const row = (label, val, note) =>
+      '<div class="comp"><span>' + label + '</span><span>' + val + (note ? ' <span style="color:#6b7885">' + note + '</span>' : '') + '</span></div>';
+    breakdownEl.innerHTML =
+      row('Punctuality · 60%', s.punctuality, '1000 − ' + s.delays) +
+      row('Throughput · 25%', s.throughput, s.cleared + '/' + s.scheduled + ' trains') +
+      row('Smoothness · 15%', s.smoothness, '300 − 10×' + s.avoidableStops + ' avoidable − 2×' + s.brakeEvents + ' brake') +
+      (s.precedencePenalties ? row('Precedence', '<span class="neg">−' + s.precedencePenalties + '</span>', 'route priority errors') : '') +
+      '<div class="comp total"><span>TOTAL</span><span>' + s.total + '</span></div>';
+    scoreEl.textContent = 'SCORE ' + s.total;
+    scoreEl.className = sim.state.frozen ? 'dead' : (s.total < 400 ? 'poor' : '');
+  }
+
+  // UI-020: train order list — every train with its schedule vs actual, delay,
+  // and state. Late trains amber, more than 15 min late red.
+  function updateTrainList() {
+    if (!sim.state.level) { trainListEl.style.display = 'none'; return; }
+    trainListEl.style.display = 'flex';
+    let html = '<div class="trow" style="color:#6b7885"><span style="flex:1">TRAIN</span><span>SCHED ARR / ACTUAL</span><span style="margin-left:8px">DELAY</span><span style="margin-left:8px">STATE</span></div>';
+    const now = sim.state.gameTime;
+    for (const t of sim.state.trains) {
+      const sArr = t.schedArrivalS != null ? fmtClock(t.schedArrivalS) : '—';
+      const aArr = t.actualArrivalS != null ? fmtClock(t.actualArrivalS) : '—';
+      const delay = t.delayMin || (t.despawned ? 0 : sim.trainDelayMin(t, now));
+      const lateCls = delay > 15 ? ' tlate bad' : (delay > 0 ? ' tlate' : '');
+      html += '<div class="trow">' +
+        '<span class="swatch" style="background:' + t.colour + '"></span>' +
+        '<span class="tid">' + t.id + '</span>' +
+        '<span class="tname">' + t.name + '</span>' +
+        '<span>' + sArr + ' / ' + aArr + '</span>' +
+        '<span class="' + lateCls.trim() + '" style="margin-left:8px">+' + delay + 'm</span>' +
+        '<span class="tstate" style="margin-left:8px">' + (t.despawned ? 'DESPAWNED' : t.state) + '</span>' +
+        '</div>';
+    }
+    trainListEl.innerHTML = html;
+  }
+
+  // ---- failure (FAI-050) and level-complete (LVL-011) presentation ----
+  function showFailure() {
+    const h = sim.state.hazards[0];
+    if (!h) return;
+    const d = sim.describeHazard(h);
+    document.getElementById('fail-what').textContent = d.what;
+    document.getElementById('fail-rule').textContent = d.rule;
+    document.getElementById('fail-why').textContent = d.why;
+    document.getElementById('fail-advise').textContent = d.advise;
+    show('failmodal');
+  }
+
+  function showDebrief() {
+    const s = sim.score();
+    const p = sim.state.score.perTrain;
+    let perTrain = '';
+    for (const id in p) {
+      const t = p[id];
+      perTrain += '<div class="comp"><span>' + t.name + ' (' + id + ') · w' + t.delayWeight + '</span>' +
+        '<span>' + (t.delayMin ? '<span class="neg">+' + t.delayMin + ' min</span>' : '<span>on time</span>') + '</span></div>';
+    }
+    const refusals = sim.state.audit.refusals.length;
+    const prec = sim.state.score.precedenceLog;
+    let precTxt = '';
+    for (const e of prec)
+      precTxt += '<div class="comp"><span class="neg">Precedence</span><span>' + e.trainName + ' held for ' + e.blockedByName + ' (−' + e.penalty + ')</span></div>';
+    const pc = sim.state.level.passCriteria || {};
+    const maxDelay = Math.max(0, ...Object.values(sim.state.score.perTrain).map(t => t.delayMin));
+    const passed = s.total >= (pc.minScore || 0) && maxDelay <= (pc.maxDelayMin != null ? pc.maxDelayMin : Infinity);
+    document.getElementById('debrief-body').innerHTML =
+      '<div class="comp"><span>Punctuality</span><span>' + s.punctuality + '</span></div>' +
+      '<div class="comp"><span>Throughput</span><span>' + s.throughput + ' (' + s.cleared + '/' + s.scheduled + ')</span></div>' +
+      '<div class="comp"><span>Smoothness</span><span>' + s.smoothness + '</span></div>' +
+      precTxt +
+      '<div class="comp total"><span>TOTAL SCORE</span><span>' + s.total + '</span></div>' +
+      '<p style="color:' + (passed ? '#2fd05a' : '#ff3b30') + '">' +
+      (passed ? 'PASS' : 'FAIL') + ' — criteria: min score ' + (pc.minScore || 0) +
+      ', max delay ' + (pc.maxDelayMin != null ? pc.maxDelayMin + ' min' : 'any') + '</p>' +
+      '<h3>Per-train delay (SCO-010)</h3>' + perTrain +
+      '<h3>Operating log</h3>' +
+      '<p>' + refusals + ' refused command' + (refusals === 1 ? '' : 's') + ' · ' +
+      sim.state.score.avoidableStops + ' avoidable stop(s) · ' + sim.state.score.brakeEvents + ' unnecessary brake event(s)</p>';
+    // persist completion + best score (LVL-010, TEC-008)
+    if (progress.completed.indexOf(app.levelId) === -1) progress.completed.push(app.levelId);
+    if (progress.best[app.levelId] === undefined || s.total > progress.best[app.levelId])
+      progress.best[app.levelId] = s.total;
+    store.save();
+    const next = timetable.levelById(app.levelId + 1);
+    document.getElementById('debrief-next').style.display = (next && unlocked(next.id)) ? '' : 'none';
+    show('debrief');
+  }
+
   // ---- game loop: fixed-timestep accumulator (SIM-002/003/004) ----
   let last = performance.now();
   let acc = 0;
@@ -2720,24 +3910,33 @@ const input = (function () {
     last = now;
     acc += dt * app.speed;
     let ticks = 0;
-    while (acc >= CONST.DT && ticks < CONST.MAX_TICKS_PER_FRAME && !sim.state.frozen) {
+    while (acc >= CONST.DT && ticks < CONST.MAX_TICKS_PER_FRAME && app.started && !sim.state.frozen) {
       sim.tick(); acc -= CONST.DT; ticks++;
     }
     if (ticks >= CONST.MAX_TICKS_PER_FRAME) acc = 0;   // SIM-003: discard excess
     demoStep();
     if (sim.state.frozen && !app.announced && sim.state.hazards.length) {
       const h = sim.state.hazards[0];
-      ui.showMessage('SPAD — train ' + h.trainId + ' passed signal ' + h.signalId +
-        ' at danger (' + h.speedKph + ' km/h @ ' + fmtClock(h.time) + '). Simulation frozen.', true);
+      ui.showMessage(h.type + ' — ' + sim.describeHazard(h).what, true);
       status.style.color = '#ff3b30';
       app.announced = true;
+      showFailure();
+    }
+    if (sim.state.completed && !sim.state.frozen && !app.debriefShown) {
+      app.debriefShown = true;
+      showDebrief();
     }
     updateBlocksUI();
     updateTelemetry();
+    updateScore();
+    updateTrainList();
     render.draw();
     requestAnimationFrame(gameLoop);
   }
   requestAnimationFrame(gameLoop);
+
+  // boot into level 2's briefing (guided demo level)
+  startLevel(2);
 })();
 </script>
 </body>

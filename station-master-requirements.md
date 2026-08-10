@@ -1179,11 +1179,12 @@ true, each verified by a named automated test and a manual observation.
 | 7 | A goods train too long for a loop is refused entry to that loop | `T14`, Level 4 |
 | 8 | Cancelling a cleared route with a train approaching enforces the 120 s delay | `T15`, `T16` |
 | 9 | A train given a late Yellow cannot stop in time and SPADs, proving braking distance is real | `T21` |
-| 10 | The screen contains no scenery — only track, signals, trains and text | Manual |
-| 11 | The player has no way to select an aspect | `T30`, manual |
-| 12 | Runs from `file://` with no network activity | Manual, DevTools network tab empty |
-| 13 | Deterministic across replays at 1×, 2× and 5× | `T26` |
-| 14 | Every enforced rule was surfaced in the UI before it could first be broken | `UI-090` audit per level |
+| 10 | A second train calls on into an occupied berth at ≤ 15 km/h and stops short; that Red is not a SPAD | `T22`, `T23` |
+| 11 | The screen contains no scenery — only track, signals, trains and text | Manual |
+| 12 | The player has no way to select an aspect | `T30`, manual |
+| 13 | Runs from `file://` with no network activity | Manual, DevTools network tab empty |
+| 14 | Deterministic across replays at 1×, 2× and 5× | `T26` |
+| 15 | Every enforced rule was surfaced in the UI before it could first be broken | `UI-090` audit per level |
 
 ---
 
