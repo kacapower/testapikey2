@@ -8,12 +8,15 @@ import { schedule, isDue, profileInterval } from './poller.js';
 import { pollAndNotify } from './notify.js';
 import { cleanupOldMedia } from './retention.js';
 import { buildBackupArchive } from './backup.js';
-import { syncToHF, deleteFromHF, restoreFromHF, hfEnabled } from './hf.js';
+import { syncToHF, deleteFromHF, restoreFromHF, hfEnabled, createSyncDebouncer } from './hf.js';
 import { sendTelegram, telegramConfigured } from './telegram.js';
 
 export function createApp({ config = loadConfig(), store = new Store(config.dataDir) } = {}) {
   const app = express();
   app.use(express.json());
+
+  const syncDebouncer = createSyncDebouncer(config, store);
+  store.onChange(() => syncDebouncer.schedule());
 
   app.use(express.static(config.publicDir, { extensions: ['html'] }));
 
@@ -217,12 +220,19 @@ export function createApp({ config = loadConfig(), store = new Store(config.data
     res.json({ ok: true, username: newUsername, profile: updated });
   });
 
-  app.delete('/api/config/profiles/:username', requireAuth, (req, res) => {
+  app.delete('/api/config/profiles/:username', requireAuth, async (req, res) => {
     const username = normalizeUsername(req.params.username);
     if (!username) {
       return res.status(400).json({ error: 'Invalid Instagram username.' });
     }
     store.removeProfile(username);
+    if (hfEnabled(config)) {
+      try {
+        await deleteFromHF(config, store, username);
+      } catch (err) {
+        console.warn(`[hf] delete sync failed: ${err.message}`);
+      }
+    }
     res.json({ ok: true, username, profiles: store.getProfiles() });
   });
 
@@ -292,9 +302,14 @@ export function createApp({ config = loadConfig(), store = new Store(config.data
     }
     try {
       const r = await syncToHF(store, config);
-      const cfg = store.getConfig();
-      store.setConfig({ hfLastUploadAt: r.ok ? new Date().toISOString() : cfg.hfLastUploadAt || null, hfLastError: r.ok ? null : (r.errors || []).join('; ') || null });
-      res.json({ ok: true, uploaded: r.uploaded, errors: r.errors, created: r.created });
+      store.mute(() => {
+        const cfg = store.getConfig();
+        store.setConfig({
+          hfLastUploadAt: r.ok ? new Date().toISOString() : cfg.hfLastUploadAt || null,
+          hfLastError: r.ok ? null : (r.errors || []).join('; ') || null,
+        });
+      });
+      res.json({ ok: true, uploaded: r.uploaded, errors: r.errors });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -365,16 +380,23 @@ export function createApp({ config = loadConfig(), store = new Store(config.data
   return app;
 }
 
-export function main() {
+export async function main() {
   const config = loadConfig();
   const store = new Store(config.dataDir);
-  const app = createApp({ config, store });
 
-  restoreFromHF(config, store)
-    .then((r) => {
-      if (!r.skipped) console.log(`[restore] ${r.restored} file(s) restored from HF${r.errors?.length ? ` (${r.errors.length} failed)` : ''}`);
-    })
-    .catch((err) => console.warn(`[restore] failed: ${err.message}`));
+  try {
+    const restored = await Promise.race([
+      restoreFromHF(config, store),
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, skipped: true, reason: 'timeout' }), 120000)),
+    ]);
+    if (!restored.skipped) {
+      console.log(`[restore] ${restored.restored} file(s) restored from HF${restored.errors?.length ? ` (${restored.errors.length} failed)` : ''}`);
+    }
+  } catch (err) {
+    console.warn(`[restore] failed: ${err.message}`);
+  }
+
+  const app = createApp({ config, store });
 
   schedule(config, store, { keepAlive: true, onPoll: (s, c) => pollAndNotify(s, c) });
 
@@ -393,5 +415,8 @@ export function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 }

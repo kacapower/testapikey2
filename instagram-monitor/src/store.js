@@ -6,8 +6,37 @@ export class Store {
   constructor(dataDir) {
     this.dataDir = dataDir;
     this.mediaDir = path.join(dataDir, 'media');
+    this._changeListeners = new Set();
+    this._silent = 0;
     fs.mkdirSync(this.dataDir, { recursive: true });
     fs.mkdirSync(this.mediaDir, { recursive: true });
+  }
+
+  /** Subscribes to state mutations. Returns an unsubscribe function. */
+  onChange(cb) {
+    this._changeListeners.add(cb);
+    return () => this._changeListeners.delete(cb);
+  }
+
+  /** Runs a callback suppressing change notifications (used by sync internals). */
+  mute(cb) {
+    this._silent += 1;
+    try {
+      return cb();
+    } finally {
+      this._silent -= 1;
+    }
+  }
+
+  _emitChange() {
+    if (this._silent) return;
+    for (const cb of this._changeListeners) {
+      try {
+        cb();
+      } catch {
+        /* listener errors are non-fatal */
+      }
+    }
   }
 
   _file(name) {
@@ -138,6 +167,7 @@ export class Store {
 
   setHfManifest(manifest) {
     this.writeJson(HF_MANIFEST_FILE, manifest);
+    this._emitChange();
   }
 
   getProfiles() {
@@ -147,6 +177,7 @@ export class Store {
   setConfig(patch) {
     const cfg = { ...this.getConfig(), ...patch };
     this.writeJson(CONFIG_FILE, cfg);
+    this._emitChange();
     return cfg;
   }
 
@@ -157,6 +188,7 @@ export class Store {
 
   setPasswordHash(hash) {
     this.writeJson(PASSWORD_FILE, { hash, setAt: new Date().toISOString() });
+    this._emitChange();
   }
 
   getHistory() {
@@ -165,6 +197,7 @@ export class Store {
 
   setHistory(h) {
     this.writeJson(HISTORY_FILE, h);
+    this._emitChange();
   }
 
   saveSnapshot(username, snapshot) {

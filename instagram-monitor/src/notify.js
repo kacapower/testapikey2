@@ -27,14 +27,16 @@ async function syncHFAfterPoll(store, config) {
   if (!hfEnabled(config)) return null;
   try {
     const r = await syncToHF(store, config);
-    const cfg = store.getConfig();
-    store.setConfig({
-      hfLastUploadAt: r.ok ? new Date().toISOString() : cfg.hfLastUploadAt || null,
-      hfLastError: r.ok ? null : (r.errors || []).join('; ') || null,
+    store.mute(() => {
+      const cfg = store.getConfig();
+      store.setConfig({
+        hfLastUploadAt: r.ok ? new Date().toISOString() : cfg.hfLastUploadAt || null,
+        hfLastError: r.ok ? null : (r.errors || []).join('; ') || null,
+      });
     });
     return r;
   } catch (err) {
-    store.setConfig({ hfLastError: err.message });
+    store.mute(() => store.setConfig({ hfLastError: err.message }));
     return { ok: false, error: err.message };
   }
 }
