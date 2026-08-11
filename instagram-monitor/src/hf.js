@@ -173,6 +173,15 @@ export async function syncToHF(store, config) {
   const ops = [];
   let toUpload = 0;
 
+  const metaFiles = {
+    '_meta/config.json': { ...cfg },
+    '_meta/hf-manifest.json': manifest,
+  };
+  for (const [rel, data] of Object.entries(metaFiles)) {
+    ops.push({ path: rel, user: '_meta', rel, buf: Buffer.from(JSON.stringify(data, null, 2)) });
+    toUpload += 1;
+  }
+
   for (const p of cfg.profiles || []) {
     const user = p.username;
     const jsonFiles = {
@@ -235,4 +244,118 @@ export async function deleteFromHF(config, store, username) {
   delete manifest[username];
   store.setHfManifest(manifest);
   return { ok: true, deleted: paths.length };
+}
+
+function safeSegments(rel) {
+  const segs = rel.split('/').filter(Boolean);
+  if (!segs.length) return null;
+  if (segs.some((s) => s === '..' || s === '.' || s.includes('\\'))) return null;
+  return segs;
+}
+
+async function downloadResolve(config, rel) {
+  const res = await fetch(`${HF_API}/datasets/${config.hfDataset}/resolve/main/${rel}`, {
+    headers: authHeaders(config),
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`resolve ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error('empty file');
+  return buf;
+}
+
+/**
+ * Pulls all backed-up state back into the local data dir. Intended for a
+ * freshly-deployed (ephemeral-disk) instance so the gallery, profiles and
+ * history survive redeploys. Layout mapping:
+ *   _meta/config.json      -> config.json        (only when local has no profiles)
+ *   _meta/hf-manifest.json -> hf-manifest.json   (only when missing)
+ *   <user>/profile.json    -> profile entry merged into config profiles
+ *   <user>/history.json    -> merged into history.profiles[user]
+ *   <user>/media/<file>    -> media/<user>/<file>
+ * Existing local files are never overwritten.
+ */
+export async function restoreFromHF(config, store) {
+  if (!hfEnabled(config)) return { ok: false, skipped: true, reason: 'HF not configured (HF_TOKEN + HF_DATASET)' };
+  const res = await fetch(`${HF_API}/api/datasets/${config.hfDataset}/tree/main?recursive=1`, {
+    headers: authHeaders(config),
+  });
+  if (res.status === 404) return { ok: true, skipped: true, reason: 'dataset empty' };
+  if (!res.ok) throw new Error(`HF tree ${res.status}`);
+  const items = await res.json();
+  const files = (items || []).filter((i) => i.type === 'file' && !i.path.startsWith('.'));
+
+  const errors = [];
+  let restored = 0;
+  let changedProfiles = false;
+
+  const cfg = store.getConfig();
+  const history = store.getHistory();
+
+  for (const f of files) {
+    try {
+      const segs = safeSegments(f.path);
+      if (!segs) continue;
+
+      if (segs[0] === '_meta') {
+        if (segs[1] === 'config.json') {
+          if (!(cfg.profiles || []).length) {
+            const buf = await downloadResolve(config, f.path);
+            store.writeJson('config.json', JSON.parse(buf.toString('utf8')));
+            restored += 1;
+          }
+        } else if (segs[1] === 'hf-manifest.json') {
+          if (!fs.existsSync(store._file('hf-manifest.json'))) {
+            const buf = await downloadResolve(config, f.path);
+            store.writeJson('hf-manifest.json', JSON.parse(buf.toString('utf8')));
+            restored += 1;
+          }
+        }
+        continue;
+      }
+
+      if (segs.length >= 3 && segs[1] === 'media') {
+        const [user, , ...rest] = segs;
+        const dest = path.join(store.mediaDir, user, ...rest);
+        if (fs.existsSync(dest)) continue;
+        const buf = await downloadResolve(config, f.path);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, buf);
+        restored += 1;
+        continue;
+      }
+
+      if (segs[1] === 'history.json') {
+        const user = segs[0];
+        if (!history.profiles[user] || !history.profiles[user].length) {
+          const buf = await downloadResolve(config, f.path);
+          const merged = JSON.parse(buf.toString('utf8'));
+          history.profiles[user] = merged;
+          restored += 1;
+        }
+        continue;
+      }
+
+      if (segs[1] === 'profile.json') {
+        const user = segs[0];
+        if (!(cfg.profiles || []).some((p) => p.username === user)) {
+          const buf = await downloadResolve(config, f.path);
+          const entry = { username: user, ...JSON.parse(buf.toString('utf8')) };
+          cfg.profiles.push(entry);
+          changedProfiles = true;
+          restored += 1;
+        }
+      }
+    } catch (err) {
+      errors.push(`${f.path}: ${err.message}`);
+    }
+  }
+
+  if (changedProfiles) store.setConfig({ profiles: cfg.profiles });
+  if (restored) {
+    store.writeJson('history.json', history);
+    store.writeJson('hf-manifest.json', store.getHfManifest());
+  }
+
+  return { ok: errors.length === 0, restored, errors };
 }

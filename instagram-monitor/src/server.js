@@ -8,7 +8,7 @@ import { schedule, isDue, profileInterval } from './poller.js';
 import { pollAndNotify } from './notify.js';
 import { cleanupOldMedia } from './retention.js';
 import { buildBackupArchive } from './backup.js';
-import { syncToHF, deleteFromHF, hfEnabled } from './hf.js';
+import { syncToHF, deleteFromHF, restoreFromHF, hfEnabled } from './hf.js';
 import { sendTelegram, telegramConfigured } from './telegram.js';
 
 export function createApp({ config = loadConfig(), store = new Store(config.dataDir) } = {}) {
@@ -369,6 +369,12 @@ export function main() {
   const config = loadConfig();
   const store = new Store(config.dataDir);
   const app = createApp({ config, store });
+
+  restoreFromHF(config, store)
+    .then((r) => {
+      if (!r.skipped) console.log(`[restore] ${r.restored} file(s) restored from HF${r.errors?.length ? ` (${r.errors.length} failed)` : ''}`);
+    })
+    .catch((err) => console.warn(`[restore] failed: ${err.message}`));
 
   schedule(config, store, { keepAlive: true, onPoll: (s, c) => pollAndNotify(s, c) });
 
