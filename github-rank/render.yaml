@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: github-rank
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: MAX_REPOS
+        value: "20"
+
+# Also works with the native Node runtime if the Dockerfile is removed:
+#   runtime: node
+#   buildCommand: npm ci --omit=dev
+#   startCommand: npm start

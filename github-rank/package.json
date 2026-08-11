@@ -1,0 +1,19 @@
+{
+  "name": "github-rank",
+  "version": "1.0.0",
+  "description": "Find GitHub repositories of a specific type and rank them by activity, review activity, forks and stars.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2"
+  }
+}

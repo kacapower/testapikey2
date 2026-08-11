@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub Repo Rank</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --canvas: #ffffff;
+        --surface: #f7f8fa;
+        --hairline: #e5e7eb;
+        --hairline-soft: #eaecf0;
+        --ink: #0a0a0a;
+        --charcoal: #222222;
+        --steel: #45515e;
+        --stone: #8e8e93;
+        --muted: #a8aab2;
+        --success-bg: #e8ffea;
+        --success-text: #1ba673;
+        --brand-coral: #ff5530;
+        --brand-magenta: #ea5ec1;
+        --brand-blue: #1456f0;
+        --brand-purple: #a855f7;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'DM Sans', Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        background: var(--canvas);
+        -webkit-font-smoothing: antialiased;
+      }
+      header {
+        position: sticky; top: 0; z-index: 10;
+        background: var(--canvas);
+        border-bottom: 1px solid var(--hairline-soft);
+        padding: 14px 24px;
+        display: flex; align-items: center; gap: 16px;
+      }
+      .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.5px; }
+      .brand span { color: var(--brand-coral); }
+      header form { display: flex; gap: 8px; flex: 1; max-width: 720px; }
+      input[type='search'] {
+        flex: 1; height: 40px; padding: 0 16px;
+        border: 1px solid var(--hairline); border-radius: 8px;
+        font: 500 14px/1.4 'DM Sans', sans-serif; color: var(--ink);
+        background: var(--canvas);
+      }
+      input[type='search']:focus { border: 2px solid var(--brand-blue); outline: none; }
+      .btn {
+        height: 40px; padding: 0 24px; border-radius: 9999px;
+        font: 600 14px/1.4 'DM Sans', sans-serif; cursor: pointer;
+      }
+      .btn-primary { background: var(--ink); color: #fff; border: 1px solid var(--ink); }
+      .btn-primary:disabled { background: var(--hairline); border-color: var(--hairline); color: var(--muted); cursor: default; }
+      main { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+      .muted { color: var(--steel); }
+      .hero h1 { font-size: 40px; line-height: 1.1; letter-spacing: -1px; margin: 0 0 8px; }
+      .hero p { margin: 0 0 24px; color: var(--steel); font-size: 16px; max-width: 640px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+      .chip {
+        background: var(--canvas); color: var(--steel); font-size: 13px; font-weight: 500;
+        border: 1px solid var(--hairline); border-radius: 9999px; padding: 8px 14px; cursor: pointer;
+      }
+      .chip:hover { border-color: var(--ink); color: var(--ink); }
+      .controls { display: flex; gap: 12px; align-items: center; margin: 20px 0 12px; }
+      .controls label { font-size: 13px; font-weight: 600; color: var(--steel); }
+      .controls select {
+        height: 36px; padding: 0 12px; border: 1px solid var(--hairline);
+        border-radius: 8px; background: var(--canvas); font: 500 13px 'DM Sans', sans-serif;
+      }
+      .summary { font-size: 13px; color: var(--steel); margin: 0 0 16px; }
+      .rate { font-size: 12px; color: var(--muted); margin-left: auto; }
+      .warn {
+        background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
+        font-size: 13px; border-radius: 8px; padding: 10px 14px; margin: 0 0 16px;
+      }
+      table { width: 100%; border-collapse: collapse; border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; font-size: 14px; }
+      thead th {
+        background: var(--surface); text-align: left; padding: 12px 16px;
+        font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em;
+        color: var(--steel); border-bottom: 1px solid var(--hairline); white-space: nowrap;
+      }
+      tbody td { padding: 12px 16px; border-bottom: 1px solid var(--hairline-soft); vertical-align: top; }
+      tbody tr:hover { background: var(--surface); }
+      .rank { font-weight: 700; font-size: 18px; color: var(--stone); }
+      .repo a { color: var(--ink); font-weight: 600; text-decoration: none; }
+      .repo a:hover { text-decoration: underline; color: var(--brand-blue); }
+      .desc { color: var(--steel); font-size: 13px; margin: 4px 0 6px; max-width: 420px; }
+      .lang { display: inline-block; font-size: 12px; font-weight: 500; color: var(--stone); }
+      .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:baseline; }
+      .topics span {
+        display: inline-block; font-size: 11px; color: var(--brand-blue);
+        background: #eff6ff; border-radius: 6px; padding: 2px 6px; margin: 2px 4px 2px 0;
+      }
+      .score { font-weight: 700; font-size: 18px; text-align: right; }
+      .bar { width: 96px; height: 5px; background: var(--hairline); border-radius: 9999px; margin-top: 4px; margin-left: auto; overflow: hidden; }
+      .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand-blue), var(--brand-purple)); }
+      .sub { font-size: 12px; color: var(--stone); white-space: nowrap; }
+      tfoot td { padding: 14px 16px; color: var(--muted); font-size: 13px; }
+      .empty { padding: 48px; text-align: center; color: var(--muted); }
+      .spin { width: 22px; height: 22px; border: 3px solid var(--hairline); border-top-color: var(--ink); border-radius: 50%; animation: s 0.7s linear infinite; }
+      @keyframes s { to { transform: rotate(360deg); } }
+      footer { max-width: 1080px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--hairline-soft); color: var(--muted); font-size: 13px; }
+      footer code { background: var(--surface); padding: 2px 6px; border-radius: 6px; }
+      @media (max-width: 720px) {
+        header { flex-wrap: wrap; }
+        main { padding: 20px 14px 60px; }
+        .hero h1 { font-size: 28px; }
+        .hide-sm { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">GitHub<span>·</span>Rank</div>
+      <form id="form" role="search">
+        <input type="search" id="q" placeholder="Try: LLM agent framework, invoice OCR, Rust web framework…" autocomplete="off" />
+        <button class="btn btn-primary" id="go" type="submit">Rank</button>
+      </form>
+    </header>
+
+    <main>
+      <section class="hero" id="intro">
+        <h1>Find the right repo, not just the popular one.</h1>
+        <p>
+          Search GitHub by topic or keyword and rank the results by stars, forks,
+          <em>active maintenance</em> and <em>review activity</em> — so well-maintained
+          projects surface above abandoned-but-popular ones.
+        </p>
+        <div class="chips" id="chips"></div>
+      </section>
+
+      <div class="controls hide-sm" id="controls" hidden>
+        <label for="sort">Sort by</label>
+        <select id="sort">
+          <option value="score">Score (composite)</option>
+          <option value="stars">Stars</option>
+          <option value="forks">Forks</option>
+          <option value="activity">Activity</option>
+          <option value="review">Review activity</option>
+        </select>
+        <div class="summary" id="summary"></div>
+        <div class="rate" id="rate"></div>
+      </div>
+
+      <div id="warn"></div>
+      <div id="wrap"></div>
+    </main>
+
+    <footer>
+      Score = log-scaled stars + forks + recency-weighted push activity + measured pull-request review
+      flow (merged + review comments). Create a <code>GITHUB_TOKEN</code> for higher API rate limits.
+    </footer>
+
+    <script>
+      const EXAMPLES = [
+        'LLM agent framework',
+        'invoice OCR',
+        'Rust web framework',
+        'vector database',
+        'self-hosted analytics',
+        'open source CI system',
+      ];
+
+      const chips = document.getElementById('chips');
+      EXAMPLES.forEach((ex) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        b.textContent = ex;
+        b.onclick = () => { document.getElementById('q').value = ex; run(ex); };
+        chips.appendChild(b);
+      });
+
+      const COLORS = {
+        shell: '#89e051', python: '#3572A5', typescript: '#3178c6', javascript: '#f1e05a',
+        go: '#00ADD8', rust: '#dea584', java: '#b07219', 'c++': '#f34b7d', c: '#555555',
+        ruby: '#701516', php: '#4F5D95', css: '#563d7c', html: '#e34c26', swift: '#F05138',
+        kotlin: '#A97BFF', dockerfile: '#384d54', csharp: '#178600', 'jupyter notebook': '#DA5B0B',
+      };
+
+      const state = { query: null, data: null, sort: 'score' };
+
+      function run(q) {
+        const go = document.getElementById('go');
+        go.disabled = true;
+        go.innerHTML = '<span class="spin" style="display:inline-block;margin:-4px 0"></span>';
+        document.getElementById('intro').style.display = 'none';
+        document.getElementById('controls').hidden = false;
+        setSummary('Ranking…');
+        document.getElementById('warn').innerHTML = '';
+
+        fetch('/api/search?q=' + encodeURIComponent(q) + '&per_page=20')
+          .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error)))))
+          .then((data) => {
+            state.query = q;
+            state.data = data;
+            state.sort = 'score';
+            document.getElementById('sort').value = 'score';
+            if (data.warnings && data.warnings.length) {
+              document.getElementById('warn').innerHTML = '<div class="warn">⚠ ' +
+                data.warnings.length + ' repo(s) skipped for review metrics: ' +
+                data.warnings.slice(0, 3).map((w) => '<code>' + w + '</code>').join('; ') + '</div>';
+            }
+            const rl = data.rateLimit;
+            if (rl && rl.remaining != null) {
+              document.getElementById('rate').textContent =
+                'GitHub rate limit: ' + rl.remaining + ' remaining (reset ' + new Date(rl.reset).toLocaleTimeString() + ')';
+            }
+            render();
+          })
+          .catch((err) => {
+            setSummary('Error');
+            document.getElementById('wrap').innerHTML =
+              '<div class="warn" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">' + err.message + '</div>';
+          })
+          .finally(() => {
+            go.disabled = false;
+            go.textContent = 'Rank';
+          });
+      }
+
+      function setSummary(t) {
+        document.getElementById('summary').textContent = t;
+      }
+
+      function val(r, k) {
+        if (k === 'score') return r.score;
+        if (k === 'stars') return r.stars;
+        if (k === 'forks') return r.forks;
+        if (k === 'activity') return r.breakdown.activity;
+        if (k === 'review') return r.breakdown.review;
+        return 0;
+      }
+
+      function render() {
+        const { repos, count } = state.data;
+        const s = state.sort;
+        const sorted = [...repos].sort((a, b) => val(b, s) - val(a, s));
+        const top = val(sorted[0], s) || 1;
+        setSummary(count + ' repositories matched "' + state.query + '", ranked by ' + s + '.');
+
+        const t = document.createElement('table');
+        t.innerHTML = `
+          <thead>
+            <tr>
+              <th>#</th><th>Repository</th>
+              <th class="hide-sm">Activity</th><th class="hide-sm">Review activity</th>
+              <th>Stars</th><th>Forks</th><th style="text-align:right">Score</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot><tr><td colspan="7">Scores are composite: stars (log) + forks (log) + activity + review, each weighted. NaN rows had no PR data.</td></tr></tfoot>`;
+
+        const body = t.querySelector('tbody');
+        sorted.forEach((r, i) => {
+          const tr = document.createElement('tr');
+          const langColor = COLORS[String(r.language || '').toLowerCase()] || '#a8aab2';
+          const pushed = fmtTime(r.pushedAt);
+          const prs = r.prs || {};
+          const topics = (r.topics || []).slice(0, 4).map((tp) => '<span>' + tp + '</span>').join('');
+          tr.innerHTML = `
+            <td class="rank">${i + 1}</td>
+            <td class="repo">
+              <a href="${r.htmlUrl}" target="_blank" rel="noopener">${r.fullName}</a>
+              <div class="desc">${r.description || ''}</div>
+              <div class="topics">${topics}</div>
+              <span class="lang"><span class="dot" style="background:${langColor}"></span>${r.language || 'n/a'} · ${r.license || 'no license'}</span>
+            </td>
+            <td class="hide-sm"><span class="sub">pushed ${pushed}</span><br><span class="sub">${r.openIssues} issues · created ${fmtDate(r.createdAt)}</span></td>
+            <td class="hide-sm"><span class="sub">${prs.open || 0} open · ${prs.merged || 0} merged PRs</span><br><span class="sub">${prs.reviewComments || 0} review comments${prs.latestActivity ? ' · ' + fmtDate(prs.latestActivity) : ''}</span></td>
+            <td>${fmt(r.stars)}</td>
+            <td>${fmt(r.forks)}</td>
+            <td>
+              <div class="score">${r.score.toFixed(1)}</div>
+              <div class="bar"><i style="width:${Math.round((r.score / (top || 1)) * 100)}%"></i></div>
+              <div class="sub">★${r.breakdown.stars.toFixed(1)} · ⑂${r.breakdown.forks.toFixed(1)}</div>
+            </td>`;
+          body.appendChild(tr);
+        });
+
+        const wrap = document.getElementById('wrap');
+        wrap.innerHTML = '';
+        wrap.appendChild(t);
+      }
+
+      function fmt(n) {
+        if (n == null) return '—';
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return String(n);
+      }
+
+      function fmtDate(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return d.toISOString().slice(0, 10);
+      }
+
+      function fmtTime(iso) {
+        if (!iso) return '—';
+        const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+        if (days < 0) return 'today';
+        if (days === 0) return 'today';
+        if (days < 30) return days + 'd ago';
+        if (days < 365) return Math.floor(days / 30) + 'mo ago';
+        return Math.floor(days / 365) + 'y ago';
+      }
+
+      document.getElementById('form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const q = document.getElementById('q').value.trim();
+        if (q) run(q);
+      });
+      document.getElementById('sort').addEventListener('change', (e) => {
+        state.sort = e.target.value;
+        if (state.data) render();
+      });
+    </script>
+  </body>
+</html>
