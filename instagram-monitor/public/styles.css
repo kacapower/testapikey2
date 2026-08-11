@@ -1,0 +1,238 @@
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+::selection {
+  background: #ff5530;
+  color: #fff;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --card-border: #eaecf0;
+  --soft: #f2f3f5;
+  --ink: #0a0a0a;
+  --slate: #45515e;
+  --muted: #8e8e93;
+  --faint: #a8aab2;
+  --hairline: #e5e7eb;
+  --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 24px -12px rgba(10, 10, 10, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --card-border: #262d38;
+    --soft: #1c2430;
+    --ink: #e6edf3;
+    --slate: #a8b3c0;
+    --muted: #8b98a5;
+    --faint: #6b7683;
+    --hairline: #303840;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+}
+
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9999px;
+  padding: 11px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-primary {
+  background: #0a0a0a;
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: #222222;
+}
+
+.btn-primary:disabled {
+  background: var(--hairline);
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.btn-secondary:hover {
+  background: var(--soft);
+}
+
+.btn-tertiary {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--card-border);
+}
+
+.btn-tertiary:hover {
+  background: var(--bg);
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 11px 16px;
+  font-size: 15px;
+  background: var(--card);
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.08);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chip-ok { background: #e8ffea; color: #1ba673; }
+.chip-error { background: #ffe9e6; color: #ff5530; }
+.chip-idle { background: var(--soft); color: var(--muted); }
+.chip-info { background: #e8f0ff; color: #1456f0; }
+.chip-story { background: #fff0e6; color: #ff7a1a; }
+
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9999px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  transition: all 0.15s ease;
+}
+
+.nav-pill:hover {
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.nav-pill.active {
+  background: #0a0a0a;
+  color: #ffffff;
+  border-color: #0a0a0a;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.nav-item:hover {
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.nav-item.active {
+  background: #0a0a0a;
+  color: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .nav-item.active {
+    background: #e6edf3;
+    color: #0d1117;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .nav-pill.active {
+    background: #e6edf3;
+    color: #0d1117;
+    border-color: #e6edf3;
+  }
+}
+
+@media (max-width: 640px) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--slate);
+  user-select: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #0a0a0a;
+  cursor: pointer;
+}
+
+.fade-in { animation: fadeIn 0.25s ease both; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
