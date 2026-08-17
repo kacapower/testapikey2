@@ -15,6 +15,16 @@
 
   <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 hidden rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg z-50"></div>
 
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <button class="lb-close" aria-label="Close media viewer">✕</button>
+    <button class="lb-prev" aria-label="Previous media">‹</button>
+    <div class="lb-stage">
+      <div class="lb-media"></div>
+      <div class="lb-caption"></div>
+    </div>
+    <button class="lb-next" aria-label="Next media">›</button>
+  </div>
+
   <script src="/app.js" defer></script>
 </body>
 </html>

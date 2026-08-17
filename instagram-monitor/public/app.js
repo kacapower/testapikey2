@@ -7,6 +7,7 @@ let activeAccount = 'all';
 let lbWindow = 'all';
 let lbSort = { key: 'changes', dir: -1 };
 let page = 'dashboard';
+let lastStatusKey = '';
 
 const INTERVALS = [1, 2, 3, 4, 6, 8, 12, 24];
 const RETENTION_OPTIONS = [3, 7, 14, 30];
@@ -58,10 +59,15 @@ async function api(path, options = {}) {
 
 function showToast(message, ok = true) {
   toastEl.textContent = message;
-  toastEl.classList.remove('hidden');
+  toastEl.classList.remove('hidden', 'toast-show');
   toastEl.style.background = ok ? '#1ba673' : '#ff5530';
+  void toastEl.offsetWidth;
+  toastEl.classList.add('toast-show');
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => toastEl.classList.add('hidden'), 3200);
+  showToast._t = setTimeout(() => {
+    toastEl.classList.add('hidden');
+    toastEl.classList.remove('toast-show');
+  }, 3200);
 }
 
 function fmtTime(iso) {
@@ -179,6 +185,177 @@ function latestAvatar(username) {
 function latestSnapshot(username) {
   const list = ((historyData || {}).profiles || {})[username] || [];
   return list.length ? list[list.length - 1] : null;
+}
+
+/* ---------- Sparklines ---------- */
+
+function followerSeries(username) {
+  const list = ((historyData || {}).profiles || {})[username] || [];
+  return list
+    .map((s) => (s.profile && typeof s.profile.followersCount === 'number' ? s.profile.followersCount : null))
+    .filter((v) => v !== null);
+}
+
+function drawSpark(canvas) {
+  const vals = followerSeries(canvas.dataset.spark);
+  if (vals.length < 2) {
+    canvas.style.display = 'none';
+    return;
+  }
+  const cssW = Math.max(canvas.clientWidth || 120, 60);
+  const cssH = 36;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = cssW * dpr;
+  canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const step = (cssW - 4) / (vals.length - 1);
+  const pts = vals.map((v, i) => [2 + i * step, cssH - 6 - ((v - min) / range) * (cssH - 12)]);
+  const rising = vals[vals.length - 1] >= vals[0];
+  const color = rising ? '#1ba673' : '#ff5530';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (const [x, y] of pts) ctx.lineTo(x, y);
+  ctx.stroke();
+  const g = ctx.createLinearGradient(0, 0, 0, cssH);
+  g.addColorStop(0, color + '30');
+  g.addColorStop(1, color + '00');
+  ctx.fillStyle = g;
+  ctx.lineTo(pts[pts.length - 1][0], cssH - 6);
+  ctx.lineTo(pts[0][0], cssH - 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(pts[pts.length - 1][0], pts[pts.length - 1][1], 2.4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function renderSparks(scope) {
+  (scope || document).querySelectorAll('canvas[data-spark]').forEach(drawSpark);
+}
+
+function avatarInitial(username) {
+  return (username || '?').charAt(0).toUpperCase();
+}
+
+/* ---------- Profile stat cards ---------- */
+
+function profileStatCard(username) {
+  const snap = latestSnapshot(username);
+  const meta = (status.profiles || []).find((p) => p.username === username);
+  const avatar = latestAvatar(username);
+  const count = (v) => (typeof v === 'number' ? v.toLocaleString() : '—');
+  const statBox = (label, value) => `
+    <div class="flex flex-col items-center rounded-xl bg-[#f7f8fa] dark:bg-[#1c2430] py-2.5">
+      <div class="font-bold tabular-nums text-sm">${escapeHtml(value)}</div>
+      <div class="text-[10px] font-semibold text-[#8e8e93] uppercase tracking-wide mt-0.5">${label}</div>
+    </div>`;
+  if (!snap) {
+    return `
+      <div class="card p-4 card-enter">
+        <div class="flex items-center gap-3">
+          <span class="flex h-12 w-12 items-center justify-center rounded-full bg-[#e7e9ee] dark:bg-[#262d38] font-bold text-[#8e8e93]">${avatarInitial(username)}</span>
+          <div class="min-w-0">
+            <div class="font-bold truncate">@${escapeHtml(username)}</div>
+            <div class="text-xs text-[#8e8e93]">no data yet</div>
+          </div>
+        </div>
+      </div>`;
+  }
+  const prof = snap.profile || {};
+  const bio = prof.biography ? `<p class="mt-3 text-xs text-[#5f5f5f] dark:text-[#a8b3c0] line-clamp-2">${escapeHtml(prof.biography)}</p>` : '';
+  const privateBadge = prof.isPrivate ? '<span class="chip chip-idle">private</span>' : '';
+  const storiesBadge = meta && meta.trackStories ? '<span class="chip chip-story">stories</span>' : '';
+  return `
+    <div class="card p-4 card-enter">
+      <div class="flex items-center gap-3">
+        ${avatar
+          ? `<img class="h-12 w-12 rounded-full border border-[#eaecf0] dark:border-[#262d38] object-cover" src="${escapeHtml(mediaUrl(username, avatar))}" alt="" />`
+          : `<span class="flex h-12 w-12 items-center justify-center rounded-full bg-[#e7e9ee] dark:bg-[#262d38] font-bold text-[#8e8e93]">${avatarInitial(username)}</span>`}
+        <div class="min-w-0 flex-1">
+          <div class="font-bold truncate">@${escapeHtml(username)}</div>
+          <div class="mt-1 flex flex-wrap gap-1">${privateBadge}${storiesBadge}</div>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] text-[#8e8e93] font-semibold uppercase tracking-wide">last change</div>
+          <div class="text-xs font-semibold mt-0.5">${fmtTime(snap.at)}</div>
+        </div>
+      </div>
+      <div class="mt-3 grid grid-cols-3 gap-2">
+        ${statBox('followers', count(prof.followersCount))}
+        ${statBox('following', count(prof.followingCount))}
+        ${statBox('posts', count(prof.postsCount))}
+      </div>
+      <div class="mt-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[10px] font-semibold text-[#8e8e93] uppercase tracking-wide">follower trend</span>
+        </div>
+        <canvas data-spark="${escapeHtml(username)}"></canvas>
+      </div>
+      ${bio}
+    </div>`;
+}
+
+function renderProfileCards() {
+  const usernames = visibleAccounts();
+  if (!usernames.length) return '';
+  return `
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      ${usernames.map((u, i) => `<div style="animation-delay:${i * 60}ms">${profileStatCard(u)}</div>`).join('')}
+    </div>`;
+}
+
+/* ---------- Lightbox ---------- */
+
+const lightbox = { items: [], index: 0 };
+
+function openLightbox(items, index) {
+  lightbox.items = items;
+  lightbox.index = index;
+  const el = document.getElementById('lightbox');
+  el.classList.add('show');
+  el.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  renderLightbox();
+}
+
+function closeLightbox() {
+  const el = document.getElementById('lightbox');
+  el.classList.remove('show');
+  el.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+
+function renderLightbox() {
+  const el = document.getElementById('lightbox');
+  const item = lightbox.items[lightbox.index];
+  if (!item) return closeLightbox();
+  const isVideo = /\.(mp4|webm)$/i.test(item.url);
+  const media = isVideo
+    ? `<video src="${escapeHtml(item.url)}" controls autoplay playsinline class="max-h-[74vh] max-w-full rounded-2xl"></video>`
+    : `<img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.username)}" />`;
+  el.querySelector('.lb-media').innerHTML = media;
+  el.querySelector('.lb-caption').innerHTML =
+    `@${escapeHtml(item.username)} · ${escapeHtml(item.kind)}${isVideo ? ' · video' : ''} · ${lightbox.index + 1} of ${lightbox.items.length}`;
+  const prev = el.querySelector('.lb-prev');
+  const next = el.querySelector('.lb-next');
+  prev.style.visibility = lightbox.items.length > 1 ? '' : 'hidden';
+  next.style.visibility = lightbox.items.length > 1 ? '' : 'hidden';
+}
+
+function moveLightbox(dir) {
+  const len = lightbox.items.length;
+  if (!len) return;
+  lightbox.index = (lightbox.index + dir + len) % len;
+  renderLightbox();
 }
 
 function profileBadges(profile) {
@@ -325,6 +502,7 @@ function leaderboardTable() {
           <tr class="border-b border-[#eaecf0] dark:border-[#262d38]">
             <th class="text-left py-2 pr-3 text-xs font-semibold text-[#8e8e93] uppercase tracking-wide w-14">Pos</th>
             <th class="text-left py-2 pr-3 text-xs font-semibold text-[#8e8e93] uppercase tracking-wide">Profile</th>
+            <th class="text-right py-2 px-2 text-xs font-semibold text-[#8e8e93] uppercase tracking-wide">Trend</th>
             ${cols.map((c) => `<th class="text-right py-2 px-2">${header[cols.indexOf(c)]}</th>`).join('')}
           </tr>
         </thead>
@@ -345,6 +523,7 @@ function leaderboardTable() {
                     </div>
                   </div>
                 </td>
+                <td class="py-3 px-2"><canvas data-spark="${escapeHtml(r.username)}"></canvas></td>
                 <td class="py-3 px-2 text-right font-bold tabular-nums">${r.changes}</td>
                 <td class="py-3 px-2 text-right tabular-nums">${r.posts}</td>
                 <td class="py-3 px-2 text-right tabular-nums">${r.stories}</td>
@@ -379,7 +558,10 @@ function renderDashboardPage() {
   $('#main').innerHTML = `
     ${pageHeader('Dashboard', 'Overview of every tracked profile over time.')}
     <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-      ${pollStatusChip}
+      <div class="flex items-center gap-2">
+        <span class="chip chip-ok"><span class="live-dot"></span>live</span>
+        ${pollStatusChip}
+      </div>
       ${renderProfilesNav()}
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center mb-6">
@@ -388,7 +570,10 @@ function renderDashboardPage() {
       <div class="rounded-2xl bg-[#f7f8fa] dark:bg-[#1c2430] p-4"><div class="text-sm font-bold">${fmtTime(s.lastPollAt)}</div><div class="text-xs font-semibold text-[#8e8e93] mt-1">last poll</div></div>
       <div class="rounded-2xl bg-[#f7f8fa] dark:bg-[#1c2430] p-4"><div class="text-sm font-bold">${fmtTime(s.nextPollAt)}</div><div class="text-xs font-semibold text-[#8e8e93] mt-1">next poll</div></div>
     </div>
-    <div class="grid gap-6">${renderHistorySections()}</div>`;
+    ${renderProfileCards()}
+    <div class="grid gap-6 mt-6">${renderHistorySections()}</div>`;
+
+  renderSparks($('#main'));
 
   app.querySelectorAll('.nav-pill').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -421,6 +606,7 @@ function renderLeaderboardTable() {
   const box = $('#leaderboard');
   if (!box) return;
   box.innerHTML = leaderboardTable();
+  renderSparks(box);
   box.querySelectorAll('.lb-sort').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.key;
@@ -664,7 +850,7 @@ async function renderDataPage() {
     ${pageHeader('Data', 'Storage, backups, retention and Hugging Face sync.')}
     <section class="card p-6 mb-6">
       <h2 class="text-lg font-bold mb-4">Storage usage</h2>
-      <div id="usage-box"><p class="text-[#8e8e93] text-sm">Loading…</p></div>
+      <div id="usage-box"><div class="flex flex-col gap-2">${Array.from({ length: 3 }, () => '<div class="skeleton h-12 rounded-xl"></div>').join('')}</div></div>
     </section>
     <section class="card p-6 mb-6">
       <h2 class="text-lg font-bold mb-4">Downloads</h2>
@@ -778,7 +964,7 @@ async function renderGalleryPage() {
       </select>
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" id="gallery-grid">
-      <p class="text-[#8e8e93] text-sm col-span-full">Loading…</p>
+      ${Array.from({ length: 8 }, () => '<div class="skeleton aspect-square rounded-xl"></div>').join('')}
     </div>`;
 
   const kind = gallery.kind || 'all';
@@ -787,22 +973,34 @@ async function renderGalleryPage() {
   const items = data.items.filter((it) => (kind === 'all' || it.kind === kind) && (user === 'all' || it.username === user));
   const grid = $('#gallery-grid');
   if (!items.length) {
-    grid.innerHTML = '<p class="text-[#8e8e93] text-sm col-span-full text-center py-8">No media yet.</p>';
+    grid.innerHTML = `
+      <div class="col-span-full empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+        <p class="text-sm">No media yet.</p>
+        <p class="text-xs">Run a poll to start capturing avatars, posts and stories.</p>
+      </div>`;
   } else {
-    grid.innerHTML = items.map((it) => {
+    grid.innerHTML = items.map((it, idx) => {
       const isVideo = /\.(mp4|webm)$/i.test(it.url);
       const tile = isVideo
         ? `<video src="${escapeHtml(it.url)}" preload="metadata" muted loop playsinline class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200"></video>`
         : `<img src="${escapeHtml(it.url)}" loading="lazy" class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200" alt="${escapeHtml(it.username)}" />`;
       return `
-      <a href="${escapeHtml(it.url)}" target="_blank" rel="noopener" class="group relative block overflow-hidden rounded-xl border border-[#eaecf0] dark:border-[#262d38]">
+      <button type="button" class="lb-open group relative block w-full overflow-hidden rounded-xl border border-[#eaecf0] dark:border-[#262d38] text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1456f0]" data-index="${idx}" aria-label="View media from @${escapeHtml(it.username)}">
         ${tile}
         <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
           <div class="text-[10px] font-bold text-white truncate">@${escapeHtml(it.username)} · ${escapeHtml(it.kind)}${isVideo ? ' · video' : ''}</div>
         </div>
-      </a>`;
+        <span class="absolute top-1.5 right-1.5 inline-flex items-center justify-center h-6 w-6 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3.5 w-3.5"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        </span>
+      </button>`;
     }).join('');
   }
+
+  grid.querySelectorAll('.lb-open').forEach((btn) => {
+    btn.addEventListener('click', () => openLightbox(items, Number(btn.dataset.index)));
+  });
 
   app.querySelectorAll('.gallery-kind').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -950,6 +1148,7 @@ async function refresh() {
   }
   if (!historyData) historyData = await api('/api/history');
   renderShell();
+  lastStatusKey = statusFingerprint(status);
 }
 
 async function render() {
@@ -959,4 +1158,50 @@ async function render() {
   await refresh();
 }
 
+function wireLightbox() {
+  const el = document.getElementById('lightbox');
+  el.querySelector('.lb-close').addEventListener('click', closeLightbox);
+  el.querySelector('.lb-prev').addEventListener('click', () => moveLightbox(-1));
+  el.querySelector('.lb-next').addEventListener('click', () => moveLightbox(1));
+  el.addEventListener('click', (e) => {
+    if (e.target === el) closeLightbox();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (el.classList.contains('show')) {
+      if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowLeft') moveLightbox(-1);
+      if (e.key === 'ArrowRight') moveLightbox(1);
+    }
+  });
+}
+
+/* ---------- Live auto-refresh ---------- */
+
+function statusFingerprint(s) {
+  const profiles = (s.profiles || []).map((p) => p.username + ':' + p.lastPollAt).join(',');
+  return JSON.stringify([s.lastPollAt, s.lastPollStatus, s.totalSnapshots, s.totalChanges, s.nextPollAt, profiles]);
+}
+
+function isTyping() {
+  const el = document.activeElement;
+  return el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
+}
+
+async function liveRefresh() {
+  if (document.hidden || isTyping()) return;
+  try {
+    const s = await api('/api/status');
+    if (statusFingerprint(s) === lastStatusKey) return;
+    lastStatusKey = statusFingerprint(s);
+    status = s;
+    if (status.passwordSet && status.locked) return;
+    historyData = await api('/api/history');
+    renderPage();
+  } catch {
+    /* keep old view on transient errors */
+  }
+}
+
+wireLightbox();
 render();
+setInterval(liveRefresh, 15000);
