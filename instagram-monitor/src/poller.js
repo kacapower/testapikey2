@@ -111,7 +111,7 @@ function filterPostsByBackfill(posts, entry) {
   return posts.filter((p) => !p.timestamp || Date.parse(p.timestamp) >= from);
 }
 
-async function pollProfile(store, config, entry) {
+async function pollProfile(store, config, entry, runner = runActorSync) {
   const { username } = entry;
 
   const actorInput = {
@@ -119,7 +119,7 @@ async function pollProfile(store, config, entry) {
     resultsType: 'details',
     resultsLimit: MAX_POST_MEDIA,
   };
-  let raw = await runActorSync(config.apifyActor, actorInput, config.apifyToken);
+  let raw = await runner(config.apifyActor, actorInput, config.apifyToken);
   let profile = normalizeProfile(raw);
 
   const isPrivate = profile.isPrivate;
@@ -130,7 +130,7 @@ async function pollProfile(store, config, entry) {
 
   const justWentPublic = !!prev && prev.profile?.isPrivate === true && isPrivate === false;
   if (justWentPublic) {
-    const backfillRaw = await runActorSync(config.apifyActor, { ...actorInput, resultsLimit: 30 }, config.apifyToken);
+    const backfillRaw = await runner(config.apifyActor, { ...actorInput, resultsLimit: 30 }, config.apifyToken);
     profile = normalizeProfile(backfillRaw);
   }
 
@@ -197,7 +197,7 @@ async function pollProfile(store, config, entry) {
   return { snapshot, storyChanged };
 }
 
-export async function poll(store, config, { force = false } = {}) {
+export async function poll(store, config, { force = false, runner = runActorSync } = {}) {
   const cfg = store.getConfig();
   const profiles = cfg.profiles || [];
   if (!profiles.length) {
@@ -214,20 +214,27 @@ export async function poll(store, config, { force = false } = {}) {
   const results = [];
   let totalChanges = 0;
   let polledCount = 0;
+  let pingCount = 0;
+
+  const pendingPings = [];
 
   for (const entry of profiles) {
     const due = force || isDue(entry, config, now);
     if (!due) {
-      results.push({
-        username: entry.username,
-        ok: true,
-        due: false,
-        nextPollAt: new Date(Date.parse(entry.lastPolledAt) + profileInterval(entry, config) * 60 * 60 * 1000).toISOString(),
-      });
+      if (entry.isPrivate) {
+        pendingPings.push(entry);
+      } else {
+        results.push({
+          username: entry.username,
+          ok: true,
+          due: false,
+          nextPollAt: new Date(Date.parse(entry.lastPolledAt) + profileInterval(entry, config) * 60 * 60 * 1000).toISOString(),
+        });
+      }
       continue;
     }
     try {
-      const { snapshot, storyChanged } = await pollProfile(store, config, entry);
+      const { snapshot, storyChanged } = await pollProfile(store, config, entry, runner);
       polledCount += 1;
       totalChanges += snapshot.changeCount;
       results.push({
@@ -241,6 +248,53 @@ export async function poll(store, config, { force = false } = {}) {
       });
     } catch (err) {
       results.push({ username: entry.username, ok: false, due: true, error: err.message });
+    }
+  }
+
+  if (pendingPings.length) {
+    pingCount = pendingPings.length;
+    try {
+      const statuses = await pingPrivateAccounts(store, config, pendingPings, runner);
+      for (const entry of pendingPings) {
+        const status = statuses.get(entry.username);
+        if (!status) {
+          results.push({ username: entry.username, ok: true, due: false, ping: true, error: 'no result from ping' });
+          continue;
+        }
+        if (!status.isPrivate) {
+          try {
+            const { snapshot, storyChanged } = await pollProfile(store, config, entry, runner);
+            polledCount += 1;
+            totalChanges += snapshot.changeCount;
+            results.push({
+              username: entry.username,
+              ok: true,
+              due: true,
+              ping: true,
+              wentPublic: true,
+              at: snapshot.at,
+              changeCount: snapshot.changeCount,
+              changes: snapshot.changes,
+              newStories: storyChanged.length,
+            });
+          } catch (err) {
+            results.push({ username: entry.username, ok: false, due: true, ping: true, wentPublic: true, error: err.message });
+          }
+        } else {
+          results.push({
+            username: entry.username,
+            ok: true,
+            due: false,
+            ping: true,
+            stillPrivate: true,
+            nextPollAt: new Date(Date.parse(entry.lastPolledAt || startedAt) + profileInterval(entry, config) * 60 * 60 * 1000).toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      for (const entry of pendingPings) {
+        results.push({ username: entry.username, ok: true, due: false, ping: true, error: err.message });
+      }
     }
   }
 
@@ -262,7 +316,30 @@ export async function poll(store, config, { force = false } = {}) {
     skipped: false,
     results,
     polledCount,
+    pingCount,
     totalChanges,
     nextPollAt: store.getConfig().nextPollAt,
   };
+}
+
+/**
+ * Hourly privacy ping for known-private accounts. All private accounts are
+ * checked in ONE batched actor run (a lightweight `details` scrape) so we learn
+ * within ~1h whether any went public, without paying for a full poll per
+ * account. Returns Map<username, { isPrivate }> for the accounts returned.
+ */
+async function pingPrivateAccounts(store, config, entries, runner = runActorSync) {
+  const actorInput = {
+    directUrls: entries.map((e) => `https://www.instagram.com/${e.username}/`),
+    resultsType: 'details',
+    resultsLimit: Math.max(entries.length, 1),
+  };
+  const raw = await runner(config.apifyActor, actorInput, config.apifyToken, { timeoutMs: 180000 });
+  const items = Array.isArray(raw) ? raw : [raw];
+  const map = new Map();
+  for (const item of items) {
+    if (!item || item.noResults || !item.username) continue;
+    map.set(item.username, { isPrivate: !!(item.private || item.isPrivate) });
+  }
+  return map;
 }

@@ -493,7 +493,7 @@ function renderConfigPage() {
           </select>
         </div>
         <button id="interval-save" class="btn-pill btn-secondary">Save interval</button>
-        <span class="text-xs text-[#8e8e93]">Private accounts are batched and checked every ${s.batchIntervalHours} hour(s) unless overridden per profile.</span>
+        <span class="text-xs text-[#8e8e93]">Private accounts are privacy-pinged hourly (cheap, batched) and fully checked every ${s.batchIntervalHours} hour(s) unless overridden per profile. If one goes public it is pulled immediately and you get a Telegram alert.</span>
       </div>
     </section>
 

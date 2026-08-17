@@ -18,3 +18,5 @@ services:
         value: apify/instagram-scraper
       - key: POLL_INTERVAL_HOURS
         value: "1"
+      - key: POLL_BATCH_HOURS
+        value: "8"

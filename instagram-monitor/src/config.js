@@ -16,7 +16,7 @@ export function loadConfig() {
     storiesProxy: process.env.APIFY_STORIES_PROXY || '',
     instagramSession: process.env.INSTAGRAM_SESSION || '',
     pollIntervalHours: Number(process.env.POLL_INTERVAL_HOURS) || 1,
-    batchIntervalHours: Number(process.env.POLL_BATCH_HOURS) || 6,
+    batchIntervalHours: Number(process.env.POLL_BATCH_HOURS) || 8,
     retentionDays: Number(process.env.RETENTION_DAYS) || 7,
     hfToken: process.env.HF_TOKEN || '',
     hfDataset: process.env.HF_DATASET || '',

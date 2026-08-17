@@ -59,6 +59,7 @@ export function createApp({ config = loadConfig(), store = new Store(config.data
       profiles: authed ? profiles : [],
       intervalHours: cfg.intervalHours || config.pollIntervalHours,
       batchIntervalHours: config.batchIntervalHours,
+      privacyPing: true,
       storiesEnabled: !!config.storiesActor,
       lastPollAt: cfg.lastPollAt,
       lastPollStatus: cfg.lastPollStatus,
