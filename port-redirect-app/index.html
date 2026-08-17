@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Port Redirect</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="bg-gray-800 w-full max-w-md rounded-xl p-6 shadow-2xl">
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-bold mb-2">OpenCode Port Access</h1>
+            <p class="text-gray-400 text-sm">Enter your port to open your OpenCode workspace</p>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-bold mb-2 text-gray-300">Default URL</label>
+                <div class="bg-gray-700 rounded-lg p-3 text-sm text-green-400 break-all" id="urlPreview">
+                    https://psychic-space-robot-jj7rvqwvg9jx2jj79-44045.app.github.dev/
+                </div>
+            </div>
+            <div>
+                <label for="port" class="block text-sm font-bold mb-2 text-gray-300">Port Number</label>
+                <input type="number" id="port" value="44045"
+                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 focus:outline-none focus:border-blue-500"
+                    placeholder="Enter port e.g. 44045">
+            </div>
+            <button onclick="redirectToPort()"
+                class="w-full bg-green-600 hover:bg-green-500 transition px-6 py-3 rounded-lg font-bold text-lg">
+                Open Workspace
+            </button>
+            <p class="text-xs text-gray-500 text-center">Tip: This app runs statically on InfinityFree — no database needed.</p>
+        </div>
+    </div>
+    <script>
+        function redirectToPort() {
+            const port = document.getElementById('port').value.trim();
+            if (!port || isNaN(port)) {
+                alert('Please enter a valid port number');
+                return;
+            }
+            window.location.href = 'https://psychic-space-robot-jj7rvqwvg9jx2jj79-' + port + '.app.github.dev/';
+        }
+        document.getElementById('port').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') redirectToPort();
+        });
+    </script>
+</body>
+</html>
