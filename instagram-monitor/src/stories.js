@@ -2,6 +2,42 @@ import crypto from 'node:crypto';
 import { runActorSync } from './apify.js';
 
 /**
+ * Picks the best media URL for a story/highlight item.
+ *
+ * - Video stories (media_type 2 / mediaType 2 / type "video") return the first
+ *   entry of `video_versions` (highest resolution).
+ * - Image stories return the first entry of `image_versions2.candidates`
+ *   (Instagram returns candidates highest-resolution first).
+ *
+ * Falls back to the common actor fields (`mediaUrl`, `displayUrl`, ...) when
+ * the structured versions are missing.
+ */
+export function pickStoryMedia(item) {
+  const numType = Number(item.media_type ?? item.mediaType);
+  const isVideo =
+    numType === 2 ||
+    item.type === 'video' ||
+    item.mediaType === 'video' ||
+    (Array.isArray(item.video_versions) &&
+      item.video_versions.length > 0 &&
+      !(numType === 1 || item.type === 'image' || item.mediaType === 'image'));
+
+  const candidates = Array.isArray(item.image_versions2?.candidates) ? item.image_versions2.candidates : [];
+  const bestImage = candidates[0]?.url || (candidates.length > 1 ? candidates[candidates.length - 1]?.url : null);
+  const bestVideo = Array.isArray(item.video_versions) && item.video_versions.length > 0 ? item.video_versions[0]?.url : null;
+
+  return (
+    (isVideo ? bestVideo : bestImage) ||
+    (Array.isArray(item.media) && item.media[0]?.url) ||
+    item.mediaUrl ||
+    item.displayUrl ||
+    item.downloadUrl ||
+    item.imageUrl ||
+    null
+  );
+}
+
+/**
  * Stable, content-based id for a story/highlight item. The scraper returns
  * freshly time-signed CDN URLs on every run, so we must NOT key on the raw URL
  * (it would break dedup and re-notify/re-download every poll). We use the
@@ -47,15 +83,7 @@ export async function fetchStories(username, config) {
   const seenIds = new Set();
   for (const item of items) {
     if (item.type && item.type !== 'story' && item.type !== 'highlight') continue;
-    const mediaUrl =
-      item.mediaUrl ||
-      item.displayUrl ||
-      item.imageUrl ||
-      item.downloadUrl ||
-      item.video_versions?.[0]?.url ||
-      (Array.isArray(item.image_versions2?.candidates) && item.image_versions2.candidates[item.image_versions2.candidates.length - 1]?.url) ||
-      (Array.isArray(item.media) && item.media[0]?.url) ||
-      null;
+    const mediaUrl = pickStoryMedia(item);
     if (!mediaUrl) continue;
 
     const id = stableStoryId(item, mediaUrl);
