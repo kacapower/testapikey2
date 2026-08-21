@@ -101,6 +101,8 @@ export class Store {
       intervalHours: entry.intervalHours ?? null,
       lastPolledAt: entry.lastPolledAt || null,
       seenStories: Array.isArray(entry.seenStories) ? entry.seenStories : [],
+      lastStoriesError: entry.lastStoriesError || null,
+      pingMissCount: Number.isFinite(entry.pingMissCount) ? entry.pingMissCount : 0,
     };
   }
 

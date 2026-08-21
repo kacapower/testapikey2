@@ -5,11 +5,24 @@ import 'dotenv/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
 
+function requireSecretInProd(name, value) {
+  if (!value && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `${name} is not set. Refusing to start in production with an insecure default — ` +
+        `set ${name} in your environment (e.g. Render dashboard env vars).`
+    );
+  }
+  return value || `dev-${name.toLowerCase()}-change-me`;
+}
+
 export function loadConfig() {
   return {
     port: Number(process.env.PORT) || 3000,
-    secret: process.env.SECRET || 'dev-secret-change-me',
-    pollToken: process.env.POLL_TOKEN || 'dev-poll-token',
+    // In production these MUST come from real env vars — falling back to a
+    // hardcoded default would let anyone guess the poll token (to trigger
+    // /api/poll) or forge session cookies signed with a known secret.
+    secret: requireSecretInProd('SECRET', process.env.SECRET),
+    pollToken: requireSecretInProd('POLL_TOKEN', process.env.POLL_TOKEN),
     apifyToken: process.env.APIFY_TOKEN || '',
     apifyActor: process.env.APIFY_ACTOR || 'apify/instagram-scraper',
     storiesActor: process.env.APIFY_STORIES_ACTOR || '',

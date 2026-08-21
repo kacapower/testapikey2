@@ -47,29 +47,42 @@ function upgradeMediaUrl(url) {
  * repeat image (same hash) is never saved again — "save or reject". Returns the
  * stored file name (or null on failure).
  */
-async function downloadTo(store, username, url, kind) {
+async function downloadTo(store, username, url, kind, { upgrade = true } = {}) {
   if (!url) return null;
   const candidates = [];
-  const upgraded = upgradeMediaUrl(url);
-  if (upgraded !== url) candidates.push(upgraded);
+  if (upgrade) {
+    const upgraded = upgradeMediaUrl(url);
+    if (upgraded !== url) candidates.push(upgraded);
+  }
   candidates.push(url);
 
   let buf = null;
   let ext = null;
+  const errors = [];
   for (const candidate of candidates) {
     try {
       const res = await fetch(candidate, { redirect: 'follow' });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        errors.push(`${res.status} ${res.statusText}`);
+        continue;
+      }
       const data = Buffer.from(await res.arrayBuffer());
-      if (!data.length) continue;
+      if (!data.length) {
+        errors.push('empty response body');
+        continue;
+      }
       buf = data;
       ext = extensionForContentType(res.headers.get('content-type')) || extensionFor(candidate);
       break;
-    } catch {
+    } catch (err) {
+      errors.push(err.message);
       /* try next candidate */
     }
   }
-  if (!buf) return null;
+  if (!buf) {
+    console.warn(`[poller] ${kind} download failed for ${username}: ${errors.join(' | ') || 'no candidates'}`);
+    return null;
+  }
 
   const name = `${kind}-${sha8(buf)}.${ext}`;
   const full = store.mediaPathFor(username, name);
@@ -99,8 +112,14 @@ export function profileInterval(profile, config) {
 
 export function isDue(profile, config, now = Date.now()) {
   if (!profile.lastPolledAt) return true;
+  const lastPolled = Date.parse(profile.lastPolledAt);
+  // Guard against a malformed/unparseable lastPolledAt (NaN), which would
+  // otherwise make every comparison against it evaluate as due=true forever
+  // (NaN comparisons are always false, so `>=` never holds — but treating it
+  // as due is the safer failure mode than getting silently stuck).
+  if (!Number.isFinite(lastPolled)) return true;
   const hours = profileInterval(profile, config);
-  return now - Date.parse(profile.lastPolledAt) >= hours * 60 * 60 * 1000;
+  return now - lastPolled >= hours * 60 * 60 * 1000;
 }
 
 function filterPostsByBackfill(posts, entry) {
@@ -138,7 +157,12 @@ async function pollProfile(store, config, entry, runner = runActorSync) {
     store.updateProfile(username, { isPrivate });
   }
 
-  const profilePicFile = await downloadTo(store, username, profile.profilePicUrl, 'avatar');
+  // profile.profilePicUrl already prefers profilePicUrlHD (see apify.js
+  // normalizeProfile). Do NOT run it through upgradeMediaUrl — Instagram CDN
+  // URLs are almost always signed (oh/oe HMAC) and the naive resolution
+  // rewrite invalidates the signature, causing a 403 and a silent fallback to
+  // a lower-res candidate. Just download the HD URL directly.
+  const profilePicFile = await downloadTo(store, username, profile.profilePicUrl, 'avatar', { upgrade: false });
 
   const knownIds = new Set((prev ? prev.posts : []).map((p) => p.id));
   const posts = [];
@@ -148,39 +172,60 @@ async function pollProfile(store, config, entry, runner = runActorSync) {
     for (const post of tracked.slice(0, cap)) {
       const mediaFile = knownIds.has(post.id)
         ? null
-        : await downloadTo(store, username, post.displayUrl || post.thumbnailUrl, 'post');
+        : await downloadTo(store, username, post.displayUrl || post.thumbnailUrl, 'post', { upgrade: false });
       posts.push({ ...post, mediaFile });
     }
   }
 
   const stories = [];
   const storyChanged = [];
-  if (!isPrivate && entry.trackStories && config.storiesActor) {
-    try {
-      const allStories = await fetchStories(username, config);
-      const fresh = filterNewStories(allStories, entry.seenStories);
-      const newOnes = [];
-      for (const s of fresh.slice(0, 20)) {
-        const mediaFile = await downloadTo(store, username, s.mediaUrl, 'story');
-        if (mediaFile) {
-          stories.push({ ...s, mediaFile });
-          newOnes.push(s);
+  let storiesError = null;
+  if (!isPrivate && entry.trackStories) {
+    if (!config.storiesActor) {
+      // trackStories is on but no actor is configured — surface this instead
+      // of silently doing nothing, so it's visible in status/UI why stories
+      // never download.
+      storiesError = 'trackStories is enabled but APIFY_STORIES_ACTOR is not configured.';
+      console.warn(`[poller] ${storiesError}`);
+    } else {
+      try {
+        const allStories = await fetchStories(username, config);
+        const fresh = filterNewStories(allStories, entry.seenStories);
+        const newOnes = [];
+        for (const s of fresh.slice(0, 20)) {
+          const mediaFile = await downloadTo(store, username, s.mediaUrl, 'story', { upgrade: false });
+          if (mediaFile) {
+            stories.push({ ...s, mediaFile });
+            newOnes.push(s);
+          } else {
+            console.warn(`[poller] story media download failed for ${username}, skipping story entry`);
+          }
         }
+        if (newOnes.length) {
+          store.updateProfile(username, { seenStories: rememberStories(entry.seenStories, newOnes) });
+          // Don't report stories as "new" on the baseline snapshot either —
+          // they're just whatever stories happened to be live when we
+          // started tracking, not something that changed since last time.
+          if (prev) storyChanged.push(...stories);
+        }
+      } catch (err) {
+        storiesError = err.message;
+        console.warn(`[poller] stories for ${username} skipped: ${err.message}`);
       }
-      if (newOnes.length) {
-        store.updateProfile(username, { seenStories: rememberStories(entry.seenStories, newOnes) });
-        storyChanged.push(...stories);
-      }
-    } catch (err) {
-      console.warn(`[poller] stories for ${username} skipped: ${err.message}`);
     }
   }
 
   const normalized = { ...profile, profilePicFile, posts };
   const summary = summarize(normalized);
-  const changes = diffProfiles(prev, { profile: summary, posts });
-  for (const s of stories) {
-    changes.push({ type: 'story', field: 'story', to: { timestamp: s.timestamp, highlightTitle: s.highlightTitle, mediaFile: s.mediaFile } });
+  // First-ever snapshot for a profile is a baseline, not a "change" — diffing
+  // against null would otherwise report every field and every backfilled post
+  // as newly changed, flooding notifications the moment a profile is added.
+  const isBaseline = !prev;
+  const changes = isBaseline ? [] : diffProfiles(prev, { profile: summary, posts });
+  if (!isBaseline) {
+    for (const s of stories) {
+      changes.push({ type: 'story', field: 'story', to: { timestamp: s.timestamp, highlightTitle: s.highlightTitle, mediaFile: s.mediaFile } });
+    }
   }
   const snapshot = {
     at: new Date().toISOString(),
@@ -190,11 +235,13 @@ async function pollProfile(store, config, entry, runner = runActorSync) {
     stories,
     changes,
     changeCount: changes.length,
+    isBaseline,
+    storiesError,
   };
 
   store.saveSnapshot(username, snapshot);
-  store.updateProfile(username, { lastPolledAt: snapshot.at });
-  return { snapshot, storyChanged };
+  store.updateProfile(username, { lastPolledAt: snapshot.at, lastStoriesError: storiesError });
+  return { snapshot, storyChanged, storiesError };
 }
 
 export async function poll(store, config, { force = false, runner = runActorSync } = {}) {
@@ -234,7 +281,7 @@ export async function poll(store, config, { force = false, runner = runActorSync
       continue;
     }
     try {
-      const { snapshot, storyChanged } = await pollProfile(store, config, entry, runner);
+      const { snapshot, storyChanged, storiesError } = await pollProfile(store, config, entry, runner);
       polledCount += 1;
       totalChanges += snapshot.changeCount;
       results.push({
@@ -245,6 +292,7 @@ export async function poll(store, config, { force = false, runner = runActorSync
         changeCount: snapshot.changeCount,
         changes: snapshot.changes,
         newStories: storyChanged.length,
+        storiesError: storiesError || undefined,
       });
     } catch (err) {
       results.push({ username: entry.username, ok: false, due: true, error: err.message });
@@ -258,8 +306,23 @@ export async function poll(store, config, { force = false, runner = runActorSync
       for (const entry of pendingPings) {
         const status = statuses.get(entry.username);
         if (!status) {
-          results.push({ username: entry.username, ok: true, due: false, ping: true, error: 'no result from ping' });
+          // Account wasn't returned by the batched ping (rate-limited/blocked/
+          // dropped by the actor). Track consecutive misses on the profile so
+          // a persistently-failing account can eventually be flagged instead
+          // of looping identically forever with no visibility.
+          const missCount = (entry.pingMissCount || 0) + 1;
+          store.updateProfile(entry.username, { pingMissCount: missCount });
+          results.push({
+            username: entry.username,
+            ok: true,
+            due: false,
+            ping: true,
+            error: `no result from ping (${missCount} consecutive miss${missCount === 1 ? '' : 'es'})`,
+          });
           continue;
+        }
+        if (entry.pingMissCount) {
+          store.updateProfile(entry.username, { pingMissCount: 0 });
         }
         if (!status.isPrivate) {
           try {
