@@ -132,6 +132,13 @@ body {
 .chip-info { background: #e8f0ff; color: #1456f0; }
 .chip-story { background: #fff0e6; color: #ff7a1a; }
 
+@media (prefers-color-scheme: dark) {
+  .chip-ok { background: #1a3a2a; color: #4ade80; }
+  .chip-error { background: #3a1a1a; color: #f87171; }
+  .chip-info { background: #1a2a3a; color: #60a5fa; }
+  .chip-story { background: #3a2a1a; color: #fb923c; }
+}
+
 .nav-pill {
   display: inline-flex;
   align-items: center;
@@ -228,6 +235,20 @@ body {
   height: 18px;
   accent-color: #0a0a0a;
   cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.btn-pill:focus-visible,
+.input:focus-visible,
+.nav-pill:focus-visible,
+.nav-item:focus-visible,
+.chip:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .fade-in { animation: fadeIn 0.25s ease both; }

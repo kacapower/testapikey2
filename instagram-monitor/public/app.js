@@ -4,8 +4,8 @@ const toastEl = document.getElementById('toast');
 let status = null;
 let historyData = null;
 let activeAccount = 'all';
-let lbWindow = 'all';
-let lbSort = { key: 'changes', dir: -1 };
+let lbWindow = localStorage.getItem('lbWindow') || 'all';
+let lbSort = JSON.parse(localStorage.getItem('lbSort') || '{"key":"changes","dir":-1}');
 let page = 'dashboard';
 
 const INTERVALS = [1, 2, 3, 4, 6, 8, 12, 24];
@@ -64,6 +64,19 @@ function showToast(message, ok = true) {
   showToast._t = setTimeout(() => toastEl.classList.add('hidden'), 3200);
 }
 
+function setLoading(btn, loading, originalText) {
+  if (loading) {
+    btn.dataset.originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    btn.classList.add('opacity-70');
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.originalText || originalText || '';
+    btn.classList.remove('opacity-70');
+  }
+}
+
 function fmtTime(iso) {
   if (!iso) return 'never';
   const d = new Date(iso);
@@ -99,14 +112,22 @@ function mediaUrl(username, file) {
   return file ? `/api/media/${encodeURIComponent(username)}/${encodeURIComponent(file)}` : null;
 }
 
+function avatarUrl(username, file) {
+  if (!file) return null;
+  const url = mediaUrl(username, file);
+  return { url, onError: `this.onerror=null;this.src='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%238e8e93" stroke-width="1.5"%3E%3Ccircle cx="12" cy="12" r="10"%3E%3C/circle%3E%3Cpath d="M12 8a4 4 0 1 0 0 8"%3E%3C/path%3E%3C/svg%3E'` };
+}
+
 function changeItem(username, change) {
   if (change.type === 'avatar') {
+    const fromAvatar = change.from ? avatarUrl(username, change.from) : null;
+    const toAvatar = change.to ? avatarUrl(username, change.to) : null;
     return `
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-2">
-          ${change.from ? `<img class="h-14 w-14 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(mediaUrl(username, change.from))}" alt="old avatar" />` : ''}
+          ${fromAvatar ? `<img class="h-14 w-14 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(fromAvatar.url)}" onerror="${escapeHtml(fromAvatar.onError)}" alt="old avatar" />` : ''}
           <span class="text-[#8e8e93]">→</span>
-          ${change.to ? `<img class="h-14 w-14 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(mediaUrl(username, change.to))}" alt="new avatar" />` : ''}
+          ${toAvatar ? `<img class="h-14 w-14 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(toAvatar.url)}" onerror="${escapeHtml(toAvatar.onError)}" alt="new avatar" />` : ''}
         </div>
         <div class="text-sm font-semibold">${fieldLabel(change.field)} changed</div>
       </div>`;
@@ -173,7 +194,13 @@ function renderStories(username, stories) {
 function latestAvatar(username) {
   const list = ((historyData || {}).profiles || {})[username] || [];
   if (!list.length) return null;
-  return list[list.length - 1].profile.profilePicFile || null;
+  const file = list[list.length - 1].profile.profilePicFile || null;
+  if (!file) return null;
+  const url = mediaUrl(username, file);
+  return {
+    url,
+    onError: `this.onerror=null;this.src='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%238e8e93" stroke-width="1.5"%3E%3Ccircle cx="12" cy="12" r="10"%3E%3C/circle%3E%3Cpath d="M12 8a4 4 0 1 0 0 8"%3E%3C/path%3E%3C/svg%3E'`
+  };
 }
 
 function latestSnapshot(username) {
@@ -215,11 +242,11 @@ function renderProfileTimeline(username) {
   }
   const reversed = [...list].reverse();
   return `
-    <div class="relative space-y-6 pl-6 border-l border-[#eaecf0] dark:border-[#262d38]">
+    <div class="relative space-y-6 pl-6 sm:pl-8 border-l border-[#eaecf0] dark:border-[#262d38]">
       ${reversed.map((snap) => `
         <div class="relative fade-in">
-          <span class="absolute -left-[31px] top-1 h-3 w-3 rounded-full border-2 border-[#0a0a0a] dark:border-white bg-white dark:bg-[#0d1117]"></span>
-          <div class="card p-5">
+          <span class="absolute left-[-14px] sm:left-[-16px] top-1 h-4 w-4 sm:h-3 sm:w-3 rounded-full border-2 border-[#0a0a0a] dark:border-white bg-white dark:bg-[#0d1117]"></span>
+          <div class="card p-4 sm:p-5">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div class="flex items-center gap-2">
                 <span class="font-semibold">${fmtTime(snap.at)}</span>
@@ -338,7 +365,7 @@ function leaderboardTable() {
                 <td class="py-3 pr-3">
                   <div class="flex items-center gap-3">
                     <span class="inline-block h-2.5 w-2.5 rounded-full shrink-0" style="background:${accent}"></span>
-                    ${avatar ? `<img class="h-8 w-8 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(mediaUrl(r.username, avatar))}" alt="" />` : ''}
+                    ${avatar ? `<img class="h-8 w-8 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(avatar.url)}" onerror="${escapeHtml(avatar.onError)}" alt="" />` : ''}
                     <div class="min-w-0">
                       <div class="font-semibold truncate">@${escapeHtml(r.username)}${r.isPrivate ? ' <span class="text-[#8e8e93]">· private</span>' : ''}</div>
                       <div class="text-[10px] text-[#8e8e93]">${r.snapCount} snapshot${r.snapCount === 1 ? '' : 's'}</div>
@@ -412,6 +439,7 @@ function renderLeaderboardPage() {
   app.querySelectorAll('.lb-window').forEach((btn) => {
     btn.addEventListener('click', () => {
       lbWindow = btn.dataset.window;
+      localStorage.setItem('lbWindow', lbWindow);
       renderLeaderboardPage();
     });
   });
@@ -426,6 +454,7 @@ function renderLeaderboardTable() {
       const key = btn.dataset.key;
       if (lbSort.key === key) lbSort.dir = -lbSort.dir;
       else lbSort = { key, dir: -1 };
+      localStorage.setItem('lbSort', JSON.stringify(lbSort));
       renderLeaderboardTable();
     });
   });
@@ -440,7 +469,7 @@ function renderConfigPage() {
     const current = Number.isFinite(p.intervalHours) ? p.intervalHours : null;
     return `
       <div class="flex items-center gap-4 rounded-2xl bg-[#f7f8fa] dark:bg-[#1c2430] p-3 border-l-4" style="border-left-color:${accent}">
-        ${avatar ? `<img class="h-11 w-11 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(mediaUrl(p.username, avatar))}" alt="" />` : ''}
+        ${avatar ? `<img class="h-11 w-11 rounded-full border border-[#eaecf0] object-cover" src="${escapeHtml(avatar.url)}" onerror="${escapeHtml(avatar.onError)}" alt="" />` : ''}
         <div class="min-w-0 flex-1">
           <div class="font-semibold truncate">@${escapeHtml(p.username)}</div>
           <div class="mt-1 flex flex-wrap gap-1">${profileBadges(p)}</div>
@@ -534,6 +563,8 @@ function renderConfigPage() {
   $('#add-profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = $('#profile-input');
+    const submitBtn = $('#add-profile-form button[type="submit"]');
+    setLoading(submitBtn, true, 'Add');
     try {
       const r = await api('/api/config/profiles', {
         method: 'POST',
@@ -546,25 +577,35 @@ function renderConfigPage() {
       await refresh();
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(submitBtn, false, 'Add');
     }
   });
 
   $('#interval-save').addEventListener('click', async () => {
+    const btn = $('#interval-save');
+    setLoading(btn, true, 'Save interval');
     try {
       const r = await api('/api/config', { method: 'POST', body: JSON.stringify({ intervalHours: Number($('#interval-input').value) }) });
       status.intervalHours = r.intervalHours;
       showToast(`Public poll interval set to every ${r.intervalHours} hour(s).`);
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(btn, false, 'Save interval');
     }
   });
 
   $('#summary-save').addEventListener('click', async () => {
+    const btn = $('#summary-save');
+    setLoading(btn, true, 'Save summary time');
     try {
       await api('/api/config', { method: 'POST', body: JSON.stringify({ summaryHour: Number($('#summary-hour-input').value) }) });
       showToast('Daily summary time saved.');
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(btn, false, 'Save summary time');
     }
   });
 
@@ -578,11 +619,15 @@ function renderConfigPage() {
   });
 
   $('#alerts-test').addEventListener('click', async () => {
+    const btn = $('#alerts-test');
+    setLoading(btn, true, 'Send test message');
     try {
       await api('/api/alerts/test', { method: 'POST' });
       showToast('Test message sent to Telegram.');
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(btn, false, 'Send test message');
     }
   });
 
@@ -590,6 +635,7 @@ function renderConfigPage() {
     sel.addEventListener('change', async () => {
       const username = sel.dataset.username;
       const value = sel.value === 'auto' ? null : Number(sel.value);
+      sel.disabled = true;
       try {
         const r = await api(`/api/config/profiles/${encodeURIComponent(username)}`, { method: 'PATCH', body: JSON.stringify({ intervalHours: value }) });
         status.profiles = status.profiles.map((p) => (p.username === username ? r.profile : p));
@@ -597,6 +643,8 @@ function renderConfigPage() {
         await refresh();
       } catch (err) {
         showToast(err.message, false);
+      } finally {
+        sel.disabled = false;
       }
     });
   });
@@ -605,6 +653,7 @@ function renderConfigPage() {
     btn.addEventListener('click', async () => {
       const username = btn.dataset.username;
       if (!confirm(`Stop tracking @${username}? Snapshots are kept.`)) return;
+      setLoading(btn, true, 'Remove');
       try {
         const r = await api(`/api/config/profiles/${encodeURIComponent(username)}`, { method: 'DELETE' });
         status.profiles = r.profiles;
@@ -613,6 +662,8 @@ function renderConfigPage() {
         await refresh();
       } catch (err) {
         showToast(err.message, false);
+      } finally {
+        setLoading(btn, false, 'Remove');
       }
     });
   });
@@ -622,6 +673,7 @@ function renderConfigPage() {
       const username = btn.dataset.username;
       const to = prompt(`Rename @${username} to?`, username);
       if (!to || to === username) return;
+      setLoading(btn, true, 'Rename');
       try {
         const r = await api(`/api/config/profiles/${encodeURIComponent(username)}/rename`, { method: 'POST', body: JSON.stringify({ to }) });
         if (activeAccount === username) activeAccount = r.username;
@@ -629,14 +681,15 @@ function renderConfigPage() {
         await refresh();
       } catch (err) {
         showToast(err.message, false);
+      } finally {
+        setLoading(btn, false, 'Rename');
       }
     });
   });
 
   async function runPoll(force) {
     const btn = force ? $('#poll-force-btn') : $('#poll-now-btn');
-    btn.disabled = true;
-    btn.textContent = 'Polling…';
+    setLoading(btn, true, force ? 'Force poll all' : 'Run poll now');
     try {
       const r = await api(`/api/poll?force=${force ? '1' : '0'}`, { method: 'POST' });
       const failed = (r.results || []).filter((x) => !x.ok);
@@ -650,8 +703,8 @@ function renderConfigPage() {
       await refresh();
     } catch (err) {
       showToast(err.message, false);
-      btn.disabled = false;
-      btn.textContent = force ? 'Force poll all' : 'Run poll now';
+    } finally {
+      setLoading(btn, false, force ? 'Force poll all' : 'Run poll now');
     }
   }
 
@@ -730,37 +783,44 @@ async function renderDataPage() {
   });
 
   $('#retention-save').addEventListener('click', async () => {
+    const btn = $('#retention-save');
+    setLoading(btn, true, 'Save');
     try {
       await api('/api/config', { method: 'POST', body: JSON.stringify({ retentionDays: Number($('#retention-days-input').value) }) });
       showToast('Retention window saved.');
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(btn, false, 'Save');
     }
   });
 
   $('#cleanup-now').addEventListener('click', async () => {
+    const btn = $('#cleanup-now');
+    setLoading(btn, true, 'Delete old media now');
     try {
       const r = await api('/api/data/cleanup', { method: 'POST' });
       showToast(r.deleted ? `Deleted ${r.deleted} file(s), freed ${fmtBytes(r.freedBytes)}.` : 'Nothing old to delete.');
       renderDataPage();
     } catch (err) {
       showToast(err.message, false);
+    } finally {
+      setLoading(btn, false, 'Delete old media now');
     }
   });
 
   const hfBtn = $('#hf-sync-btn');
   if (hfBtn) {
     hfBtn.addEventListener('click', async () => {
-      hfBtn.disabled = true;
-      hfBtn.textContent = 'Syncing…';
+      setLoading(hfBtn, true, 'Sync now');
       try {
         const r = await api('/api/hf/sync', { method: 'POST' });
         showToast(r.errors?.length ? `Synced with ${r.errors.length} error(s).` : `Synced ${r.uploaded} file(s) to HF.`);
         await refresh();
       } catch (err) {
         showToast(err.message, false);
-        hfBtn.disabled = false;
-        hfBtn.textContent = 'Sync now';
+      } finally {
+        setLoading(hfBtn, false, 'Sync now');
       }
     });
   }
@@ -792,7 +852,7 @@ async function renderGalleryPage() {
     grid.innerHTML = items.map((it) => {
       const isVideo = /\.(mp4|webm)$/i.test(it.url);
       const tile = isVideo
-        ? `<video src="${escapeHtml(it.url)}" preload="metadata" muted loop playsinline class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200"></video>`
+        ? `<video src="${escapeHtml(it.url)}" preload="none" muted loop playsinline class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200" poster="${escapeHtml(it.url)}"></video>`
         : `<img src="${escapeHtml(it.url)}" loading="lazy" class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200" alt="${escapeHtml(it.username)}" />`;
       return `
       <a href="${escapeHtml(it.url)}" target="_blank" rel="noopener" class="group relative block overflow-hidden rounded-xl border border-[#eaecf0] dark:border-[#262d38]">

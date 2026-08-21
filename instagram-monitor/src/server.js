@@ -51,7 +51,7 @@ export function createApp({ config = loadConfig(), store = new Store(config.data
       const nextPollAt = p.lastPolledAt
         ? new Date(Date.parse(p.lastPolledAt) + intervalHours * 60 * 60 * 1000).toISOString()
         : null;
-      return { ...p, intervalHours, nextPollAt, due: isDue(p, config, now) };
+      return { ...p, intervalHours, nextPollAt, due: isDue(p, config, now), lastStoriesError: p.lastStoriesError || null };
     });
     res.json({
       passwordSet,

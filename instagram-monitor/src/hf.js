@@ -362,14 +362,22 @@ export async function restoreFromHF(config, store) {
     }
   }
 
+  const retentionMs = (config.retentionDays || 7) * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - retentionMs;
+
   for (const m of mediaFiles) {
     const dest = path.join(store.mediaDir, m.user, m.name);
     if (fs.existsSync(dest)) continue;
+
+    const mt = manifest?.[m.user]?.[`media/${m.name}`]?.mtime;
+    if (mt && mt < cutoff) {
+      continue;
+    }
+
     try {
       const buf = await downloadResolve(config, m.path);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, buf);
-      const mt = manifest?.[m.user]?.[`media/${m.name}`]?.mtime;
       if (mt) {
         const d = new Date(mt);
         fs.utimesSync(dest, d, d);

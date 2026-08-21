@@ -93,7 +93,7 @@ async function downloadTo(store, username, url, kind, { upgrade = true } = {}) {
 }
 
 export function schedule(config, store, options = {}) {
-  const minutes = Math.min(config.pollIntervalHours * 60, 60);
+  const minutes = config.pollIntervalHours * 60;
   const ms = minutes * 60 * 1000;
   const onPoll = options.onPoll || poll;
   const timer = setInterval(() => {
@@ -107,7 +107,7 @@ export function schedule(config, store, options = {}) {
 
 export function profileInterval(profile, config) {
   if (Number.isFinite(profile.intervalHours)) return profile.intervalHours;
-  return profile.isPrivate ? profile.batchIntervalHours || config.batchIntervalHours : config.pollIntervalHours;
+  return profile.isPrivate ? config.batchIntervalHours : config.pollIntervalHours;
 }
 
 export function isDue(profile, config, now = Date.now()) {
@@ -365,10 +365,15 @@ export async function poll(store, config, { force = false, runner = runActorSync
   const okCount = results.length - failed;
   const status = failed === 0 ? 'ok' : okCount === 0 ? 'error' : 'partial';
 
+  const nextPollMs = Math.min(...profiles
+    .filter((p) => p.isPrivate || force || isDue(p, config, now))
+    .map((p) => profileInterval(p, config) * 60 * 60 * 1000)
+    .concat(config.pollIntervalHours * 60 * 60 * 1000));
+  
   store.setConfig({
     lastPollStatus: status,
     lastPollError: failed > 0 ? `${failed} profile(s) failed` : null,
-    nextPollAt: new Date(now + config.pollIntervalHours * 60 * 60 * 1000).toISOString(),
+    nextPollAt: new Date(now + nextPollMs).toISOString(),
     totalSnapshots: (cfg.totalSnapshots || 0) + polledCount,
     totalChanges: (cfg.totalChanges || 0) + totalChanges,
   });
