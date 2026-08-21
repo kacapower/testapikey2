@@ -4,7 +4,7 @@ import { runActorSync, normalizeProfile } from './apify.js';
 import { diffProfiles, summarize } from './diff.js';
 import { fetchStories, filterNewStories, rememberStories } from './stories.js';
 
-const MAX_POST_MEDIA = 20;
+const MAX_POST_MEDIA = 25;
 
 function sha8(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 8);
