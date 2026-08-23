@@ -1,0 +1,10 @@
+---
+import { getStatus } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+
+if (status.passwordSet && status.locked) {
+  return Astro.redirect('/login');
+}
+
+return Astro.redirect('/dashboard');

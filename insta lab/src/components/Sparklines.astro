@@ -1,0 +1,71 @@
+---
+---
+
+<script is:inline>
+  function drawSpark(canvas: HTMLCanvasElement) {
+    const username = canvas.dataset.spark;
+    if (!username) return;
+    
+    // Get data from the page's history data
+    const historyData = (window as any).__HISTORY_DATA__;
+    if (!historyData) return;
+    
+    const list = (historyData.profiles || {})[username] || [];
+    const vals = list
+      .map((s: any) => (s.profile && typeof s.profile.followersCount === 'number' ? s.profile.followersCount : null))
+      .filter((v: any) => v !== null);
+    
+    if (vals.length < 2) {
+      canvas.style.display = 'none';
+      return;
+    }
+    
+    const cssW = Math.max(canvas.clientWidth || 120, 60);
+    const cssH = 36;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    const step = (cssW - 4) / (vals.length - 1);
+    const pts = vals.map((v: number, i: number) => [2 + i * step, cssH - 6 - ((v - min) / range) * (cssH - 12)]);
+    const rising = vals[vals.length - 1] >= vals[0];
+    const color = rising ? '#16a34a' : '#eb8e90';
+    
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (const [x, y] of pts) ctx.lineTo(x, y);
+    ctx.stroke();
+    
+    const g = ctx.createLinearGradient(0, 0, 0, cssH);
+    g.addColorStop(0, color + '30');
+    g.addColorStop(1, color + '00');
+    ctx.fillStyle = g;
+    ctx.lineTo(pts[pts.length - 1][0], cssH - 6);
+    ctx.lineTo(pts[0][0], cssH - 6);
+    ctx.closePath();
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.arc(pts[pts.length - 1][0], pts[pts.length - 1][1], 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function renderSparks(scope: Document | HTMLElement = document) {
+    scope.querySelectorAll('canvas[data-spark]').forEach((canvas) => drawSpark(canvas as HTMLCanvasElement));
+  }
+
+  // Expose globally
+  (window as any).renderSparks = renderSparks;
+  (window as any).drawSpark = drawSpark;
+</script>

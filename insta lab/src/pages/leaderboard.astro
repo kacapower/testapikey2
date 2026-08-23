@@ -1,0 +1,76 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import LeaderboardTable from '../components/LeaderboardTable.astro';
+import Sparklines from '../components/Sparklines.astro';
+import Lightbox from '../components/Lightbox.astro';
+import { getStatus, getHistoryData } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+const historyData = await getHistoryData();
+
+const mediaUrl = (username: string, file: string) => file ? `/api/media/${encodeURIComponent(username)}/${encodeURIComponent(file)}` : null;
+---
+
+<MainLayout title="Leaderboard" description="F1-style standings ranked by activity.">
+  <DashboardLayout title="Leaderboard" subtitle="F1-style standings — ranked by activity, click a column to re-rank." page="leaderboard" status={status}>
+    <Sparklines />
+    <Lightbox />
+    
+    <div class="flex gap-2 mb-5">
+      <button class="btn-primary lb-window" data-window="all">All-time</button>
+      <button class="btn-tertiary lb-window" data-window="7">7 days</button>
+      <button class="btn-tertiary lb-window" data-window="30">30 days</button>
+    </div>
+    
+    <div class="card">
+      <LeaderboardTable 
+        profiles={status.profiles || []} 
+        historyData={historyData} 
+        status={status} 
+        mediaUrl={mediaUrl} 
+        window="all" 
+        sort={{ key: 'changes', dir: -1 }} 
+      />
+    </div>
+  </DashboardLayout>
+</MainLayout>
+
+<script is:inline>
+  let lbWindow = 'all';
+  let lbSort = { key: 'changes', dir: -1 };
+  
+  const windowBtns = document.querySelectorAll('.lb-window');
+  
+  function renderLeaderboard() {
+    windowBtns.forEach(btn => {
+      btn.classList.toggle('btn-primary', btn.dataset.window === lbWindow);
+      btn.classList.toggle('btn-tertiary', btn.dataset.window !== lbWindow);
+    });
+    
+    if ((window as any).renderSparks) {
+      (window as any).renderSparks();
+    }
+  }
+  
+  windowBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      lbWindow = btn.dataset.window || 'all';
+      renderLeaderboard();
+    });
+  });
+  
+  // Sort handling
+  document.addEventListener('click', (e) => {
+    const sortBtn = (e.target as HTMLElement).closest('.lb-sort');
+    if (sortBtn) {
+      const key = sortBtn.dataset.key;
+      if (lbSort.key === key) {
+        lbSort.dir = -lbSort.dir;
+      } else {
+        lbSort = { key: key || 'changes', dir: -1 };
+      }
+      renderLeaderboard();
+    }
+  });
+</script>

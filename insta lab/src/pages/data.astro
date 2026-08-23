@@ -1,0 +1,223 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Sparklines from '../components/Sparklines.astro';
+import Lightbox from '../components/Lightbox.astro';
+import { getStatus, getHistoryData } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+const historyData = await getHistoryData();
+
+const RETENTION_OPTIONS = [3, 7, 14, 30];
+const fmtBytes = (bytes: number) => {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+};
+
+const retentionChecked = status.retentionEnabled;
+---
+
+<MainLayout title="Data" description="Storage, backups, retention and Hugging Face sync.">
+  <DashboardLayout title="Data" subtitle="Storage, backups, retention and Hugging Face sync." page="data" status={status}>
+    <Sparklines />
+    <Lightbox />
+    
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Storage usage</h2>
+      <div id="usage-box" class="flex flex-col gap-2">
+        <div class="skeleton h-12 rounded-xl"></div>
+        <div class="skeleton h-12 rounded-xl"></div>
+        <div class="skeleton h-12 rounded-xl"></div>
+      </div>
+    </section>
+    
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Downloads</h2>
+      <div class="flex flex-wrap gap-3">
+        <a class="btn-primary" href="/api/backup">Download full backup (ZIP)</a>
+      </div>
+      <div class="mt-4 flex flex-col gap-2" id="per-profile-downloads"></div>
+    </section>
+    
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-1 text-ink">Retention</h2>
+      <p class="text-sm text-muted mb-4">Media files (posts & stories) older than the retention window are deleted to save storage. Avatars are never deleted and JSON history is always kept.</p>
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="w-full sm:w-40">
+          <label class="text-sm font-semibold text-body block mb-2">Keep media for</label>
+          <select class="input" id="retention-days-input">
+            {RETENTION_OPTIONS.map((d) => (
+              <option value={d} selected={status.retentionDays === d}>{d} days</option>
+            ))}
+          </select>
+        </div>
+        <button id="retention-save" class="btn-secondary">Save</button>
+        <button id="cleanup-now" class="btn-tertiary">Delete old media now</button>
+        <label class="flex items-center gap-2 cursor-pointer text-sm text-body">
+          <input type="checkbox" id="retention-input" checked={retentionChecked} class="w-4 h-4 accent-primary" />
+          Auto-delete enabled
+        </label>
+      </div>
+    </section>
+    
+    <section class="card">
+      <h2 class="text-lg font-semibold mb-1 text-ink">Hugging Face sync</h2>
+      <p class="text-sm text-muted mb-4">Data is pushed to a dataset with a folder per person (e.g. <code class="bg-surface-strong px-1.5 py-0.5 rounded text-code">&#64;natgeo/</code>) after every poll, with retry on the next attempt.</p>
+      {status.hfEnabled ? (
+        <>
+          <div class="flex flex-wrap items-center gap-3 mb-4">
+            <span class="badge badge-info">dataset {status.hfDataset}</span>
+            <span class="badge badge-pill">last upload {status.hfLastUploadAt ? new Date(status.hfLastUploadAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'never'}</span>
+            {status.hfLastError && <span class="badge badge-error">{status.hfLastError}</span>}
+          </div>
+          <button id="hf-sync-btn" class="btn-primary">Sync now</button>
+        </>
+      ) : (
+        <p class="text-sm text-semantic-error">Hugging Face is not configured. Set HF_TOKEN and HF_DATASET (e.g. yourname/instagram-monitor) to enable.</p>
+      )}
+    </section>
+  </DashboardLayout>
+</MainLayout>
+
+<script is:inline>
+  async function api(path: string, options: RequestInit = {}) {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* no json */
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `Request failed (${res.status})`);
+    }
+    return body;
+  }
+  
+  function showToast(message: string, ok = true) {
+    const toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.textContent = message;
+    toast.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg animate-toast-in';
+    toast.style.background = ok ? '#16a34a' : '#eb8e90';
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%, 16px) scale(0.96)';
+      setTimeout(() => toast.remove(), 300);
+    }, 3200);
+  }
+  
+  // Load usage data
+  (async () => {
+    try {
+      const usage = await api('/api/data/usage');
+      const box = document.getElementById('usage-box');
+      if (box) {
+        box.innerHTML = `
+          <div class="flex flex-col gap-2">
+            ${usage.profiles.map((p: any) => `
+              <div class="flex items-center justify-between rounded-xl bg-canvas-soft px-4 py-3">
+                <span class="font-semibold text-ink">@${p.username}</span>
+                <span class="text-sm text-muted">${p.files} file${p.files === 1 ? '' : 's'} &middot; ${fmtBytes(p.bytes)}</span>
+              </div>
+            `).join('')}
+            <div class="flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-ink border-t border-hairline">
+              <span>Total</span>
+              <span>${usage.totalFiles} files &middot; ${fmtBytes(usage.totalBytes)}</span>
+            </div>
+          </div>
+        `;
+      }
+      
+      const perProfile = document.getElementById('per-profile-downloads');
+      if (perProfile && status.profiles) {
+        perProfile.innerHTML = status.profiles.map((p: any) => `
+          <a class="btn-tertiary justify-start w-full sm:w-auto" href="/api/backup/${encodeURIComponent(p.username)}">Download @${p.username} data</a>
+        `).join('');
+      }
+    } catch (err) {
+      console.error('Usage load failed:', err);
+    }
+  })();
+  
+  // Retention toggle
+  document.getElementById('retention-input')?.addEventListener('change', async (e) => {
+    try {
+      await api('/api/config', { method: 'POST', body: JSON.stringify({ retentionEnabled: (e.target as HTMLInputElement).checked }) });
+      showToast('Retention updated.');
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Retention save
+  document.getElementById('retention-save')?.addEventListener('click', async () => {
+    try {
+      await api('/api/config', { method: 'POST', body: JSON.stringify({ retentionDays: Number((document.getElementById('retention-days-input') as HTMLSelectElement).value) }) });
+      showToast('Retention window saved.');
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Cleanup now
+  document.getElementById('cleanup-now')?.addEventListener('click', async () => {
+    try {
+      const r = await api('/api/data/cleanup', { method: 'POST' });
+      showToast(r.deleted ? `Deleted ${r.deleted} file(s), freed ${fmtBytes(r.freedBytes)}.` : 'Nothing old to delete.');
+      // Reload usage
+      const usage = await api('/api/data/usage');
+      const box = document.getElementById('usage-box');
+      if (box) {
+        box.innerHTML = `
+          <div class="flex flex-col gap-2">
+            ${usage.profiles.map((p: any) => `
+              <div class="flex items-center justify-between rounded-xl bg-canvas-soft px-4 py-3">
+                <span class="font-semibold text-ink">@${p.username}</span>
+                <span class="text-sm text-muted">${p.files} file${p.files === 1 ? '' : 's'} &middot; ${fmtBytes(p.bytes)}</span>
+              </div>
+            `).join('')}
+            <div class="flex items-center justify-between rounded-xl px-4 py-3 font-semibold text-ink border-t border-hairline">
+              <span>Total</span>
+              <span>${usage.totalFiles} files &middot; ${fmtBytes(usage.totalBytes)}</span>
+            </div>
+          </div>
+        `;
+      }
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // HF sync
+  const hfBtn = document.getElementById('hf-sync-btn');
+  if (hfBtn) {
+    hfBtn.addEventListener('click', async () => {
+      hfBtn.disabled = true;
+      hfBtn.textContent = 'Syncing...';
+      try {
+        const r = await api('/api/hf/sync', { method: 'POST' });
+        showToast(r.errors?.length ? `Synced with ${r.errors.length} error(s).` : `Synced ${r.uploaded} file(s) to HF.`);
+        // Reload page to update status
+        window.location.reload();
+      } catch (err: any) {
+        showToast(err.message, false);
+        hfBtn.disabled = false;
+        hfBtn.textContent = 'Sync now';
+      }
+    });
+  }
+</script>

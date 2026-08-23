@@ -1,0 +1,30 @@
+---
+interface Props {
+  message: string;
+  type?: 'success' | 'error';
+}
+
+const { message, type = 'success' } = Astro.props;
+---
+
+<div 
+  id="toast" 
+  class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg animate-toast-in"
+  style="background: {type === 'success' ? '#16a34a' : '#eb8e90'}"
+  role="alert"
+  aria-live="polite"
+>
+  {message}
+</div>
+
+<script>
+  // Auto-hide after 3.2s
+  setTimeout(() => {
+    const el = document.getElementById('toast');
+    if (el) {
+      el.style.opacity = '0';
+      el.style.transform = 'translate(-50%, 16px) scale(0.96)';
+      setTimeout(() => el.remove(), 300);
+    }
+  }, 3200);
+</script>

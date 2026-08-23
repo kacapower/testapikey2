@@ -1,0 +1,163 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import ProfileStatCard from '../components/ProfileStatCard.astro';
+import ProfileTimeline from '../components/ProfileTimeline.astro';
+import Sparklines from '../components/Sparklines.astro';
+import Lightbox from '../components/Lightbox.astro';
+import { getStatus, getHistoryData } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+const historyData = await getHistoryData();
+
+const profiles = status.profiles || [];
+const usernames = profiles.map((p: any) => p.username);
+
+const fmtTime = (iso: string) => {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
+const pollStatusChip = 
+  status.lastPollStatus === 'ok' ? `<span class="badge badge-success"><span class="live-dot"></span>Last poll ok</span>`
+  : status.lastPollStatus === 'running' ? `<span class="badge badge-info">Polling…</span>`
+  : status.lastPollStatus === 'partial' ? `<span class="badge badge-error">Some profiles failed</span>`
+  : status.lastPollStatus === 'error' ? `<span class="badge badge-error">Last poll failed</span>`
+  : `<span class="badge badge-pill">No poll yet</span>`;
+
+const mediaUrl = (username: string, file: string) => file ? `/api/media/${encodeURIComponent(username)}/${encodeURIComponent(file)}` : null;
+
+const latestAvatar = (username: string) => {
+  const list = ((historyData || {}).profiles || {})[username] || [];
+  if (!list.length) return null;
+  return list[list.length - 1].profile?.profilePicFile ? mediaUrl(username, list[list.length - 1].profile.profilePicFile) : null;
+};
+
+const latestSnapshot = (username: string) => {
+  const list = ((historyData || {}).profiles || {})[username] || [];
+  return list.length ? list[list.length - 1] : null;
+};
+
+const avatarInitial = (u: string) => (u || '?').charAt(0).toUpperCase();
+---
+
+<MainLayout title="Dashboard" description="Overview of every tracked profile over time.">
+  <DashboardLayout title="Dashboard" subtitle="Overview of every tracked profile over time." page="dashboard" status={status}>
+    <Sparklines />
+    <Lightbox />
+    
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <div class="flex items-center gap-2">
+        <span class="badge badge-success"><span class="live-dot"></span>live</span>
+        {pollStatusChip}
+      </div>
+      
+      <div class="flex flex-wrap gap-2" id="profile-filter">
+        <button class="nav-pill active" data-account="all">All</button>
+        {profiles.map((p: any) => `
+          <button class="nav-pill" data-account={p.username}>
+            @{p.username}{p.isPrivate ? ' · private' : ''}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center mb-6">
+      <div class="rounded-2xl bg-canvas-soft p-4">
+        <div class="text-2xl font-bold text-ink">{status.totalSnapshots}</div>
+        <div class="text-xs font-semibold text-muted mt-1">snapshots</div>
+      </div>
+      <div class="rounded-2xl bg-canvas-soft p-4">
+        <div class="text-2xl font-bold text-semantic-error">{status.totalChanges}</div>
+        <div class="text-xs font-semibold text-muted mt-1">changes</div>
+      </div>
+      <div class="rounded-2xl bg-canvas-soft p-4">
+        <div class="text-sm font-bold text-ink">{fmtTime(status.lastPollAt)}</div>
+        <div class="text-xs font-semibold text-muted mt-1">last poll</div>
+      </div>
+      <div class="rounded-2xl bg-canvas-soft p-4">
+        <div class="text-sm font-bold text-ink">{fmtTime(status.nextPollAt)}</div>
+        <div class="text-xs font-semibold text-muted mt-1">next poll</div>
+      </div>
+    </div>
+
+    <div id="profile-cards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
+      {usernames.map((u: string, i: number) => {
+        const profile = latestSnapshot(u)?.profile || {};
+        const meta = profiles.find((p: any) => p.username === u);
+        return (
+          <ProfileStatCard username={u} profile={profile} meta={meta} latestAvatar={latestAvatar(u)} latestSnapshot={latestSnapshot(u)} index={i} />
+        );
+      })}
+    </div>
+
+    <div id="history-sections" class="grid gap-6">
+      {usernames.map((username: string) => (
+        <section class="card">
+          <div class="flex items-center justify-between gap-3 mb-5">
+            <h2 class="text-lg font-semibold text-ink">@{username}</h2>
+          </div>
+          <ProfileTimeline username={username} snapshots={((historyData || {}).profiles || {})[username] || []} status={status} mediaUrl={mediaUrl} />
+        </section>
+      ))}
+    </div>
+
+    {usernames.length === 0 && (
+      <div class="card text-center py-8">
+        <p class="text-muted text-sm">No profiles yet. Add your first Instagram profile in Config.</p>
+      </div>
+    )}
+  </DashboardLayout>
+</MainLayout>
+
+<script is:inline>
+  // Profile filter tabs
+  const filterBtns = document.querySelectorAll('#profile-filter .nav-pill');
+  const profileCards = document.getElementById('profile-cards');
+  const historySections = document.getElementById('history-sections');
+  
+  function updateFilter(activeAccount: string) {
+    filterBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.account === activeAccount);
+    });
+    
+    // Filter profile cards
+    if (profileCards) {
+      profileCards.querySelectorAll('[data-username]').forEach(card => {
+        const username = (card as HTMLElement).dataset.username;
+        const shouldShow = activeAccount === 'all' || username === activeAccount;
+        (card as HTMLElement).style.display = shouldShow ? '' : 'none';
+      });
+    }
+    
+    // Filter history sections
+    if (historySections) {
+      historySections.querySelectorAll('section').forEach(section => {
+        const username = section.querySelector('h2')?.textContent?.replace('@', '');
+        const shouldShow = activeAccount === 'all' || username === activeAccount;
+        (section as HTMLElement).style.display = shouldShow ? '' : 'none';
+      });
+    }
+  }
+  
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      updateFilter(btn.dataset.account || 'all');
+    });
+  });
+  
+  // Re-render sparklines after filter
+  const observer = new MutationObserver(() => {
+    if ((window as any).renderSparks) {
+      (window as any).renderSparks();
+    }
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+  
+  // Initial sparkline render
+  if ((window as any).renderSparks) {
+    (window as any).renderSparks();
+  }
+</script>

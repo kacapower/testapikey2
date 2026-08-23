@@ -12,3 +12,28 @@ venv/
 
 # Distributable archives
 *.zip
+
+# Node.js
+node_modules/
+dist/
+build/
+*.log
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+.nyc_output/

@@ -1,0 +1,118 @@
+---
+interface Props {
+  title: string;
+  subtitle: string;
+  page: string;
+  status: any;
+}
+
+const { title, subtitle, page, status } = Astro.props;
+
+const PAGES = [
+  { id: 'dashboard', label: 'Dashboard', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>' },
+  { id: 'leaderboard', label: 'Leaderboard', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h4v2a3 3 0 0 1-3 3"/><path d="M7 5H3v2a3 3 0 0 0 3 3"/></svg>' },
+  { id: 'config', label: 'Config', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+  { id: 'data', label: 'Data', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>' },
+  { id: 'gallery', label: 'Gallery', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>' },
+];
+---
+
+<div class="flex min-h-screen bg-canvas">
+  <!-- Mobile header -->
+  <header class="sm:hidden sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-hairline px-4 h-14 bg-canvas">
+    <div class="flex items-center gap-3">
+      <button id="menu-btn" class="touch-target inline-flex items-center justify-center rounded-full border border-hairline px-3 text-body" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-5 w-5">
+          <line x1="4" y1="7" x2="20" y2="7"/>
+          <line x1="4" y1="12" x2="20" y2="12"/>
+          <line x1="4" y1="17" x2="20" y2="17"/>
+        </svg>
+      </button>
+      <div class="font-semibold tracking-tight text-ink">Instagram Monitor</div>
+    </div>
+    <div class="text-[10px] text-muted uppercase tracking-wider">change monitor</div>
+  </header>
+
+  <div id="scrim" class="fixed inset-0 z-30 hidden bg-black/40 sm:hidden" aria-hidden="true"></div>
+
+  <div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar fixed inset-y-0 left-0 z-40 w-56 -translate-x-full transition-transform duration-200 sm:sticky sm:top-0 sm:h-screen sm:translate-x-0 sm:transition-none shrink-0 border-r border-hairline p-4 flex flex-col gap-1 overflow-y-auto bg-canvas">
+      <div class="px-3 py-4 mb-2">
+        <div class="font-semibold tracking-tight text-ink">Instagram Monitor</div>
+        <div class="text-[10px] text-muted uppercase tracking-wider mt-1">change monitor</div>
+      </div>
+      
+      <nav class="flex-1" aria-label="Main navigation">
+        {PAGES.map((p) => `
+          <button class="nav-item ${page === p.id ? 'active' : ''}" data-page="${p.id}" aria-current="${page === p.id ? 'page' : 'false'}">
+            ${p.icon}
+            <span class="nav-label">${p.label}</span>
+          </button>
+        `).join('')}
+      </nav>
+
+      <div class="flex-1"></div>
+      
+      <form id="logout-form" action="/api/logout" method="POST">
+        <button type="submit" class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+          <span class="nav-label">Log out</span>
+        </button>
+      </form>
+    </aside>
+
+    <!-- Main content -->
+    <main class="flex-1 min-w-0 px-4 py-6 sm:px-6 sm:py-8 max-w-5xl">
+      <header class="mb-6">
+        <h1 class="text-2xl font-semibold tracking-tight text-ink">{title}</h1>
+        <p class="text-sm text-body mt-1">{subtitle}</p>
+      </header>
+      
+      <div id="main-content">
+        <slot />
+      </div>
+    </main>
+  </div>
+
+  <script is:inline>
+    // Mobile sidebar toggle
+    const menuBtn = document.getElementById('menu-btn');
+    const sidebar = document.getElementById('sidebar');
+    const scrim = document.getElementById('scrim');
+    
+    if (menuBtn && sidebar && scrim) {
+      menuBtn.addEventListener('click', () => {
+        const isOpen = sidebar.classList.toggle('translate-x-0');
+        scrim.classList.toggle('hidden', !isOpen);
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+        menuBtn.setAttribute('aria-expanded', String(isOpen));
+      });
+      
+      scrim.addEventListener('click', () => {
+        sidebar.classList.remove('translate-x-0');
+        scrim.classList.add('hidden');
+        document.body.style.overflow = '';
+        menuBtn.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    // Nav item clicks - navigate via fetch for SPA-like experience
+    document.querySelectorAll('.nav-item').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        if (btn.tagName === 'BUTTON' && btn.type !== 'submit') {
+          e.preventDefault();
+          const targetPage = btn.dataset.page;
+          if (targetPage && targetPage !== page) {
+            window.location.href = `/${targetPage}`;
+          }
+        }
+      });
+    });
+  </script>
+
+  <style is:global>
+    .sidebar.translate-x-0 {
+      transform: translateX(0);
+    }
+  </style>
