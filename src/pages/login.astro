@@ -1,0 +1,116 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { getStatus } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+
+const isSetup = !status.passwordSet;
+---
+
+<MainLayout title={isSetup ? 'Setup' : 'Log in'} description={isSetup ? 'Set up your Instagram Monitor password' : 'Log in to Instagram Monitor'}>
+  <div class="min-h-screen flex items-center justify-center px-4 py-12">
+    <div class="w-full max-w-md">
+      <div class="text-center mb-8">
+        <h1 class="text-3xl font-semibold tracking-tight text-ink">{isSetup ? 'Set up Instagram Monitor' : 'Welcome back'}</h1>
+        <p class="text-body mt-2">{isSetup ? 'Create a password to secure your dashboard' : 'Enter your password to continue'}</p>
+      </div>
+      
+      <form id="auth-form" class="card space-y-4" novalidate>
+        <div>
+          <label for="password" class="block text-sm font-medium text-body mb-1.5">{isSetup ? 'New password' : 'Password'}</label>
+          <input 
+            type="password" 
+            id="password" 
+            name="password" 
+            class="input" 
+            placeholder={isSetup ? 'At least 4 characters' : 'Enter your password'}
+            autocomplete={isSetup ? 'new-password' : 'current-password'}
+            required
+            minlength={4}
+          />
+        </div>
+        
+        <button type="submit" class="btn-primary w-full mt-2" id="submit-btn">
+          {isSetup ? 'Create account' : 'Log in'}
+        </button>
+        
+        <p id="error-message" class="text-sm text-semantic-error text-center hidden" aria-live="polite"></p>
+      </form>
+      
+      {isSetup && `
+        <p class="text-center text-sm text-muted mt-6">
+          This password protects access to your monitoring dashboard.
+        </p>
+      `}
+    </div>
+  </div>
+</MainLayout>
+
+<script is:inline>
+  async function api(path: string, options: RequestInit = {}) {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* no json */
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `Request failed (${res.status})`);
+    }
+    return body;
+  }
+  
+  function showError(message: string) {
+    const el = document.getElementById('error-message');
+    if (el) {
+      el.textContent = message;
+      el.classList.remove('hidden');
+    }
+  }
+  
+  function hideError() {
+    const el = document.getElementById('error-message');
+    if (el) {
+      el.classList.add('hidden');
+    }
+  }
+  
+  const isSetup = {isSetup ? 'true' : 'false'};
+  const endpoint = isSetup ? '/api/setup' : '/api/login';
+  const successPath = '/dashboard';
+  
+  document.getElementById('auth-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    hideError();
+    
+    const password = (document.getElementById('password') as HTMLInputElement).value;
+    const btn = document.getElementById('submit-btn') as HTMLButtonElement;
+    
+    if (!password || password.length < 4) {
+      showError('Password must be at least 4 characters.');
+      return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = isSetup ? 'Creating…' : 'Signing in…';
+    
+    try {
+      await api(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({ password }),
+      });
+      window.location.href = successPath;
+    } catch (err: any) {
+      showError(err.message);
+      btn.disabled = false;
+      btn.textContent = isSetup ? 'Create account' : 'Log in';
+    }
+  });
+  
+  // Hide error on input
+  document.getElementById('password')?.addEventListener('input', hideError);
+</script>

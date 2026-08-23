@@ -1,0 +1,151 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Sparklines from '../components/Sparklines.astro';
+import Lightbox from '../components/Lightbox.astro';
+import { getStatus, getHistoryData } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+const historyData = await getHistoryData();
+---
+
+<MainLayout title="Gallery" description="All downloaded media in one grid.">
+  <DashboardLayout title="Gallery" subtitle="All downloaded media in one grid." page="gallery" status={status}>
+    <Sparklines />
+    <Lightbox />
+    
+    <div class="flex flex-wrap gap-2 mb-5">
+      <button class="btn-primary gallery-kind" data-kind="all">All</button>
+      <button class="btn-tertiary gallery-kind" data-kind="avatar">Avatars</button>
+      <button class="btn-tertiary gallery-kind" data-kind="post">Posts</button>
+      <button class="btn-tertiary gallery-kind" data-kind="story">Stories</button>
+      <select class="input !w-56" id="gallery-user">
+        <option value="all">All profiles</option>
+        ${(status.profiles || []).map((p: any) => `<option value="${p.username}">@${p.username}</option>`).join('')}
+      </select>
+    </div>
+    
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" id="gallery-grid">
+      ${Array.from({ length: 8 }, () => '<div class="skeleton aspect-square rounded-xl"></div>').join('')}
+    </div>
+  </DashboardLayout>
+</MainLayout>
+
+<script is:inline>
+  async function api(path: string, options: RequestInit = {}) {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* no json */
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `Request failed (${res.status})`);
+    }
+    return body;
+  }
+  
+  const fmtTime = (iso: string) => {
+    if (!iso) return 'never';
+    const d = new Date(iso);
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+  
+  const mediaUrl = (username: string, file: string) => file ? `/api/media/${encodeURIComponent(username)}/${encodeURIComponent(file)}` : null;
+  
+  let gallery = { kind: 'all' as string, user: 'all' as string };
+  
+  async function renderGallery() {
+    const grid = document.getElementById('gallery-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = Array.from({ length: 8 }, () => '<div class="skeleton aspect-square rounded-xl"></div>').join('');
+    
+    try {
+      const data = await api('/api/media/all');
+      const items = data.items.filter((it: any) => 
+        (gallery.kind === 'all' || it.kind === gallery.kind) && 
+        (gallery.user === 'all' || it.username === gallery.user)
+      );
+      
+      if (!items.length) {
+        grid.innerHTML = `
+          <div class="col-span-full empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-10 w-10 opacity-40"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <p class="text-sm text-muted">No media yet.</p>
+            <p class="text-xs text-muted">Run a poll to start capturing avatars, posts and stories.</p>
+          </div>
+        `;
+      } else {
+        grid.innerHTML = items.map((it: any, idx: number) => {
+          const isVideo = /\.(mp4|webm)$/i.test(it.file);
+          const tile = isVideo
+            ? `<video src="${mediaUrl(it.username, it.file)}" preload="metadata" muted loop playsinline class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200"></video>`
+            : `<img src="${mediaUrl(it.username, it.file)}" loading="lazy" class="aspect-square w-full object-cover group-hover:scale-105 transition-transform duration-200" alt="${it.username}" />`;
+          return `
+            <button type="button" class="lb-open group relative block w-full overflow-hidden rounded-xl border border-hairline text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text-link" data-index="${idx}" aria-label="View media from @${it.username}">
+              ${tile}
+              <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+                <div class="text-[10px] font-bold text-white truncate">@${it.username} · ${it.kind}${isVideo ? ' · video' : ''}</div>
+              </div>
+              <span class="absolute top-1.5 right-1.5 inline-flex items-center justify-center h-6 w-6 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3.5 w-3.5"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+              </span>
+            </button>
+          `;
+        }).join('');
+      }
+      
+      // Attach lightbox handlers
+      grid.querySelectorAll('.lb-open').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number((btn as HTMLElement).dataset.index);
+          // Get the filtered items again
+          const data = await api('/api/media/all');
+          const items = data.items.filter((it: any) => 
+            (gallery.kind === 'all' || it.kind === gallery.kind) && 
+            (gallery.user === 'all' || it.username === gallery.user)
+          );
+          if ((window as any).openLightbox) {
+            (window as any).openLightbox(items, index);
+          }
+        });
+      });
+      
+      if ((window as any).renderSparks) {
+        (window as any).renderSparks();
+      }
+    } catch (err) {
+      console.error('Gallery load failed:', err);
+      const grid = document.getElementById('gallery-grid');
+      if (grid) {
+        grid.innerHTML = `<div class="col-span-full empty-state"><p class="text-sm text-semantic-error">Failed to load gallery</p></div>`;
+      }
+    }
+  }
+  
+  // Kind filter
+  document.querySelectorAll('.gallery-kind').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      gallery.kind = (btn as HTMLElement).dataset.kind || 'all';
+      document.querySelectorAll('.gallery-kind').forEach(b => {
+        b.classList.toggle('btn-primary', b.dataset.kind === gallery.kind);
+        b.classList.toggle('btn-tertiary', b.dataset.kind !== gallery.kind);
+      });
+      renderGallery();
+    });
+  });
+  
+  // User filter
+  document.getElementById('gallery-user')?.addEventListener('change', (e) => {
+    gallery.user = (e.target as HTMLSelectElement).value;
+    renderGallery();
+  });
+  
+  // Initial render
+  renderGallery();
+</script>

@@ -1,0 +1,383 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Sparklines from '../components/Sparklines.astro';
+import Lightbox from '../components/Lightbox.astro';
+import { getStatus, getHistoryData } from '../lib/data.js';
+
+const status = await getStatus(Astro);
+const historyData = await getHistoryData();
+
+const INTERVALS = [1, 2, 3, 4, 6, 8, 12, 24];
+const RETENTION_OPTIONS = [3, 7, 14, 30];
+const DRIVER_COLORS = ['#e10600', '#ff8700', '#00d2be', '#005aff', '#f9006d', '#1e41ff', '#00f5d0', '#ff2ed1', '#50c878', '#7cb342', '#e4e4e4', '#4e9a51'];
+
+const mediaUrl = (username: string, file: string) => file ? `/api/media/${encodeURIComponent(username)}/${encodeURIComponent(file)}` : null;
+
+const latestAvatar = (username: string) => {
+  const list = ((historyData || {}).profiles || {})[username] || [];
+  if (!list.length) return null;
+  return list[list.length - 1].profile?.profilePicFile ? mediaUrl(username, list[list.length - 1].profile.profilePicFile) : null;
+};
+
+const avatarInitial = (u: string) => (u || '?').charAt(0).toUpperCase();
+
+const autoInterval = (p: any) => p.isPrivate ? (p.batchIntervalHours || status.batchIntervalHours) : status.intervalHours;
+
+const fmtTime = (iso: string) => {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
+
+// Pre-compute profile cards HTML
+const profileCardsHtml = (status.profiles || []).map((p: any, idx: number) => {
+  const avatar = latestAvatar(p.username);
+  const accent = DRIVER_COLORS[idx % DRIVER_COLORS.length];
+  const current = Number.isFinite(p.intervalHours) ? p.intervalHours : null;
+  const intervalOptions = INTERVALS.map((h) => 
+    `<option value="${h}" ${current === h ? 'selected' : ''}>${h}h</option>`
+  ).join('');
+  
+  const avatarHtml = avatar 
+    ? `<img class="h-11 w-11 rounded-full border border-hairline object-cover" src="${avatar}" alt="" />`
+    : `<span class="flex h-11 w-11 items-center justify-center rounded-full bg-surface-strong font-bold text-muted">${avatarInitial(p.username)}</span>`;
+  
+  const badges = [
+    p.isPrivate ? '<span class="badge badge-pill">private</span>' : '',
+    p.backfill ? '<span class="badge badge-pill">previous downloaded</span>' : '',
+    p.trackStories ? '<span class="badge chip-story">stories</span>' : '',
+    `<span class="badge badge-info">batched ${autoInterval(p)}h</span>`
+  ].filter(Boolean).join('');
+  
+  return `
+    <div class="flex items-center gap-4 rounded-2xl bg-canvas-soft p-3 border-l-4" style="border-left-color: ${accent}">
+      ${avatarHtml}
+      <div class="min-w-0 flex-1">
+        <div class="font-semibold truncate text-ink">@${p.username}</div>
+        <div class="mt-1 flex flex-wrap gap-1">${badges}</div>
+      </div>
+      <div class="flex flex-col items-end gap-1">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-muted">every</span>
+          <select class="input !py-1 !px-2 text-xs interval-select" data-username="${p.username}">
+            <option value="auto" ${current === null ? 'selected' : ''}>auto (${autoInterval(p)}h)</option>
+            ${intervalOptions}
+          </select>
+        </div>
+        <div class="flex gap-2">
+          <button class="rename-profile btn-tertiary !px-3 !py-1.5 text-xs" data-username="${p.username}">Rename</button>
+          <button class="remove-profile btn-tertiary !px-3 !py-1.5 text-xs" data-username="${p.username}">Remove</button>
+        </div>
+      </div>
+    </div>
+  `;
+}).join('') || '<p class="text-muted text-sm">No profiles yet.</p>';
+
+// Pre-compute interval options
+const intervalOptionsHtml = INTERVALS.map((h) => 
+  `<option value="${h}" ${status.intervalHours === h ? 'selected' : ''}>${h} hour${h === 1 ? '' : 's'}</option>`
+).join('');
+
+// Pre-compute summary hour options
+const summaryHourOptionsHtml = Array.from({ length: 24 }, (_, h) => 
+  `<option value="${h}" ${status.summaryHour === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`
+).join('');
+
+// Pre-compute poller status
+const pollerStatusHtml = `
+  <span class="badge badge-pill">last poll ${fmtTime(status.lastPollAt)}</span>
+  <span class="badge badge-pill">next poll ${fmtTime(status.nextPollAt)}</span>
+  ${status.lastPollStatus === 'partial' ? '<span class="badge badge-error">some profiles failed</span>' : ''}
+  ${!status.storiesEnabled ? '<span class="badge badge-pill">stories off</span>' : ''}
+`;
+
+const pollerErrorHtml = status.lastPollError ? `<p class="mb-4 text-sm text-semantic-error">${status.lastPollError}</p>` : '';
+const storiesOffHtml = !status.storiesEnabled ? '<p class="mb-4 text-sm text-muted">Stories tracking is off — set APIFY_STORIES_ACTOR to enable it.</p>' : '';
+
+// Pre-compute alerts text
+const alertsText = status.telegramEnabled ? 'Telegram bot connected.' : 'Telegram not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_IDS to enable alerts.';
+const alertsDisabled = !status.telegramEnabled ? 'disabled' : '';
+const summaryDisabled = !status.telegramEnabled ? 'disabled' : '';
+const testDisabled = !status.telegramEnabled ? 'disabled' : '';
+---
+
+<MainLayout title="Config" description="Profiles, polling intervals and alerts.">
+  <DashboardLayout title="Config" subtitle="Profiles, polling intervals and alerts." page="config" status={status}>
+    <Sparklines />
+    <Lightbox />
+    
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Add a profile</h2>
+      <form id="add-profile-form" class="flex flex-col gap-3">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input class="input flex-1" id="profile-input" placeholder="e.g. @natgeo or https://instagram.com/natgeo" autocomplete="off" spellcheck="false" />
+          <button type="submit" class="btn-primary">Add</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-6">
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-body">
+            <input type="checkbox" id="backfill-input" checked class="w-4 h-4 accent-primary" />
+            Download previous posts
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer text-sm text-body">
+            <input type="checkbox" id="stories-input" checked class="w-4 h-4 accent-primary" />
+            Also save stories & highlights
+          </label>
+        </div>
+      </form>
+    </section>
+
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Tracked profiles</h2>
+      <div class="flex flex-col gap-2">
+        {profileCardsHtml}
+      </div>
+    </section>
+
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Poll interval</h2>
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="w-full sm:w-48">
+          <label class="text-sm font-semibold text-body block mb-2">Public poll every</label>
+          <select class="input" id="interval-input">
+            {intervalOptionsHtml}
+          </select>
+        </div>
+        <button id="interval-save" class="btn-secondary">Save interval</button>
+        <span class="text-xs text-muted">Private accounts are privacy-pinged hourly (cheap, batched) and fully checked every {status.batchIntervalHours} hour(s) unless overridden per profile. If one goes public it is pulled immediately and you get a Telegram alert.</span>
+      </div>
+    </section>
+
+    <section class="card mb-6">
+      <h2 class="text-lg font-semibold mb-4 text-ink">Poller status</h2>
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        {pollerStatusHtml}
+      </div>
+      {pollerErrorHtml}
+      {storiesOffHtml}
+      <div class="flex gap-3">
+        <button id="poll-now-btn" class="btn-primary">Run poll now</button>
+        <button id="poll-force-btn" class="btn-tertiary">Force poll all</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="text-lg font-semibold mb-1 text-ink">Alerts</h2>
+      <p class="text-sm text-muted mb-4">{alertsText}</p>
+      <div class="flex flex-col gap-4">
+        <label class="flex items-center gap-2 cursor-pointer text-sm text-body">
+          <input type="checkbox" id="alerts-input" {status.alertsEnabled ? 'checked' : ''} {alertsDisabled} class="w-4 h-4 accent-primary" />
+          Send a message when a profile changes
+        </label>
+        <div class="flex flex-wrap items-end gap-3">
+          <div class="w-full sm:w-48">
+            <label class="text-sm font-semibold text-body block mb-2">Daily summary at</label>
+            <select class="input" id="summary-hour-input" {summaryDisabled}>
+              {summaryHourOptionsHtml}
+            </select>
+          </div>
+          <button id="summary-save" class="btn-secondary" {summaryDisabled}>Save summary time</button>
+          <button id="alerts-test" class="btn-tertiary" {testDisabled}>Send test message</button>
+        </div>
+      </div>
+    </section>
+  </DashboardLayout>
+</MainLayout>
+
+<script is:inline>
+  const fmtTime = (iso: string) => {
+    if (!iso) return 'never';
+    const d = new Date(iso);
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+  
+  async function api(path: string, options: RequestInit = {}) {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* no json */
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `Request failed (${res.status})`);
+    }
+    return body;
+  }
+  
+  function showToast(message: string, ok = true) {
+    const toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.textContent = message;
+    toast.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg animate-toast-in';
+    toast.style.background = ok ? '#16a34a' : '#eb8e90';
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%, 16px) scale(0.96)';
+      setTimeout(() => toast.remove(), 300);
+    }, 3200);
+  }
+  
+  async function refresh() {
+    try {
+      const s = await api('/api/status');
+      Object.assign((window as any).__STATUS__, s);
+      if (s.profiles) {
+        (window as any).__STATUS__.profiles = s.profiles;
+      }
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    }
+  }
+  
+  // Add profile form
+  document.getElementById('add-profile-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('profile-input') as HTMLInputElement;
+    try {
+      const r = await api('/api/config/profiles', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          username: input.value, 
+          backfill: (document.getElementById('backfill-input') as HTMLInputElement).checked, 
+          trackStories: (document.getElementById('stories-input') as HTMLInputElement).checked 
+        }),
+      });
+      input.value = '';
+      showToast(`Added @${r.username}.`);
+      await refresh();
+      window.location.reload();
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Interval save
+  document.getElementById('interval-save')?.addEventListener('click', async () => {
+    try {
+      const r = await api('/api/config', { method: 'POST', body: JSON.stringify({ intervalHours: Number((document.getElementById('interval-input') as HTMLSelectElement).value) }) });
+      showToast(`Public poll interval set to every ${r.intervalHours} hour(s).`);
+      await refresh();
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Summary save
+  document.getElementById('summary-save')?.addEventListener('click', async () => {
+    try {
+      await api('/api/config', { method: 'POST', body: JSON.stringify({ summaryHour: Number((document.getElementById('summary-hour-input') as HTMLSelectElement).value) }) });
+      showToast('Daily summary time saved.');
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Alerts toggle
+  document.getElementById('alerts-input')?.addEventListener('change', async (e) => {
+    try {
+      await api('/api/config', { method: 'POST', body: JSON.stringify({ alertsEnabled: (e.target as HTMLInputElement).checked }) });
+      showToast('Change alerts updated.');
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Alerts test
+  document.getElementById('alerts-test')?.addEventListener('click', async () => {
+    try {
+      await api('/api/alerts/test', { method: 'POST' });
+      showToast('Test message sent to Telegram.');
+    } catch (err: any) {
+      showToast(err.message, false);
+    }
+  });
+  
+  // Per-profile interval
+  document.querySelectorAll('.interval-select').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+      const username = (sel as HTMLSelectElement).dataset.username;
+      const value = (sel as HTMLSelectElement).value === 'auto' ? null : Number((sel as HTMLSelectElement).value);
+      try {
+        const r = await api(`/api/config/profiles/${encodeURIComponent(username!)}`, { method: 'PATCH', body: JSON.stringify({ intervalHours: value }) });
+        showToast(`@${username} poll interval updated.`);
+        await refresh();
+        window.location.reload();
+      } catch (err: any) {
+        showToast(err.message, false);
+      }
+    });
+  });
+  
+  // Remove profile
+  document.querySelectorAll('.remove-profile').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const username = (btn as HTMLButtonElement).dataset.username;
+      if (!confirm(`Stop tracking @${username}? Snapshots are kept.`)) return;
+      try {
+        const r = await api(`/api/config/profiles/${encodeURIComponent(username!)}`, { method: 'DELETE' });
+        showToast(`Removed @${username}.`);
+        await refresh();
+        window.location.reload();
+      } catch (err: any) {
+        showToast(err.message, false);
+      }
+    });
+  });
+  
+  // Rename profile
+  document.querySelectorAll('.rename-profile').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const username = (btn as HTMLButtonElement).dataset.username;
+      const to = prompt(`Rename @${username} to?`, username);
+      if (!to || to === username) return;
+      try {
+        const r = await api(`/api/config/profiles/${encodeURIComponent(username!)}/rename`, { method: 'POST', body: JSON.stringify({ to }) });
+        showToast(`Renamed @${username} to @${r.username}.`);
+        await refresh();
+        window.location.reload();
+      } catch (err: any) {
+        showToast(err.message, false);
+      }
+    });
+  });
+  
+  // Poll buttons
+  async function runPoll(force: boolean) {
+    const btn = force ? document.getElementById('poll-force-btn') : document.getElementById('poll-now-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Polling…';
+    try {
+      const r = await api(`/api/poll?force=${force ? '1' : '0'}`, { method: 'POST' });
+      const failed = (r.results || []).filter((x: any) => !x.ok);
+      const newStories = (r.results || []).reduce((sum: number, x: any) => sum + (x.newStories || 0), 0);
+      let msg;
+      if (failed.length) msg = `Poll done — ${failed.length} profile(s) errored.`;
+      else if (r.polledCount === 0) msg = 'Nothing due yet — use "Force poll all" to check everything now.';
+      else if (r.totalChanges || newStories) msg = `Poll done — ${r.totalChanges} change(s), ${newStories} new stor${newStories === 1 ? 'y' : 'ies'} saved.`;
+      else msg = 'Poll done — no changes.';
+      showToast(msg, failed.length === 0);
+      await refresh();
+    } catch (err: any) {
+      showToast(err.message, false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = force ? 'Force poll all' : 'Run poll now';
+    }
+  }
+  
+  document.getElementById('poll-now-btn')?.addEventListener('click', () => runPoll(false));
+  document.getElementById('poll-force-btn')?.addEventListener('click', () => runPoll(true));
+  
+  // Initial sparkline render
+  if ((window as any).renderSparks) {
+    (window as any).renderSparks();
+  }
+</script>

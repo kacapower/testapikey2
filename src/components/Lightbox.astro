@@ -1,0 +1,103 @@
+---
+---
+
+<div id="lightbox" class="lightbox-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Media viewer">
+  <button class="lightbox-nav lb-close" aria-label="Close media viewer" style="top: 18px; right: 18px;">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6">
+      <line x1="18" y1="6" x2="6" y2="18"/>
+      <line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+  </button>
+  <button class="lightbox-nav lb-prev" aria-label="Previous media" style="left: 18px; top: 50%; transform: translateY(-50%);">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>
+  </button>
+  <div class="lb-stage max-w-[92vw] max-h-[86vh] flex flex-col items-center gap-4">
+    <div class="lb-media max-w-full max-h-[74vh] flex items-center justify-center"></div>
+    <div class="lb-caption text-sm font-semibold text-white/90 text-center"></div>
+  </div>
+  <button class="lightbox-nav lb-next" aria-label="Next media" style="right: 18px; top: 50%; transform: translateY(-50%);">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-6 w-6">
+      <polyline points="9 18 15 12 9 6"/>
+    </svg>
+  </button>
+</div>
+
+<script is:inline>
+  // Lightbox state
+  const lightbox = { items: [] as any[], index: 0 };
+  const el = document.getElementById('lightbox');
+  const mediaEl = el?.querySelector('.lb-media');
+  const captionEl = el?.querySelector('.lb-caption');
+  const prevBtn = el?.querySelector('.lb-prev');
+  const nextBtn = el?.querySelector('.lb-next');
+  const closeBtn = el?.querySelector('.lb-close');
+
+  function renderLightbox() {
+    const item = lightbox.items[lightbox.index];
+    if (!item) return closeLightbox();
+    const isVideo = /\.(mp4|webm)$/i.test(item.url);
+    if (mediaEl) {
+      mediaEl.innerHTML = isVideo
+        ? `<video src="${item.url}" controls autoplay playsinline class="max-h-[74vh] max-w-full rounded-2xl"></video>`
+        : `<img src="${item.url}" alt="${item.username}" />`;
+    }
+    if (captionEl) {
+      captionEl.innerHTML = `@${item.username} · ${item.kind}${isVideo ? ' · video' : ''} · ${lightbox.index + 1} of ${lightbox.items.length}`;
+    }
+    if (prevBtn) prevBtn.style.visibility = lightbox.items.length > 1 ? '' : 'hidden';
+    if (nextBtn) nextBtn.style.visibility = lightbox.items.length > 1 ? '' : 'hidden';
+  }
+
+  function openLightbox(items: any[], index: number) {
+    lightbox.items = items;
+    lightbox.index = index;
+    if (el) {
+      el.classList.add('show');
+      el.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      renderLightbox();
+    }
+  }
+
+  function closeLightbox() {
+    if (el) {
+      el.classList.remove('show');
+      el.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+  }
+
+  function moveLightbox(dir: number) {
+    const len = lightbox.items.length;
+    if (!len) return;
+    lightbox.index = (lightbox.index + dir + len) % len;
+    renderLightbox();
+  }
+
+  // Event listeners
+  closeBtn?.addEventListener('click', closeLightbox);
+  prevBtn?.addEventListener('click', () => moveLightbox(-1));
+  nextBtn?.addEventListener('click', () => moveLightbox(1));
+  el?.addEventListener('click', (e) => { if (e.target === el) closeLightbox(); });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', (e) => {
+    if (!el?.classList.contains('show')) return;
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft') moveLightbox(-1);
+    if (e.key === 'ArrowRight') moveLightbox(1);
+  });
+
+  // Expose globally for other components
+  (window as any).openLightbox = openLightbox;
+</script>
+
+<style is:global>
+  @media (max-width: 640px) {
+    .lb-close { top: 12px; right: 12px; }
+    .lb-prev { left: 8px; }
+    .lb-next { right: 8px; }
+  }
+</style>
