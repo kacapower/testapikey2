@@ -79,17 +79,17 @@ export async function processPdfConversion(payload, updateProgress) {
   updateProgress(35);
 
   try {
-    // Run pdftoppm in an isolated subprocess with 60s timeout and memory limit
+    // Run pdftoppm in an isolated subprocess with 180s timeout and memory limit
     await execFileAsync('pdftoppm', args, {
-      timeout: 60000,
-      maxBuffer: 10 * 1024 * 1024,
+      timeout: 180000,
+      maxBuffer: 25 * 1024 * 1024,
     });
   } catch (err) {
     // Clean up temp dir
     await fs.rm(jobTempDir, { recursive: true, force: true }).catch(() => {});
 
     if (err.killed || err.signal === 'SIGTERM') {
-      throw new AppError(ErrorCodes.ERR_TIMEOUT, 'PDF conversion timed out (60s limit).');
+      throw new AppError(ErrorCodes.ERR_TIMEOUT, 'PDF conversion timed out (180s limit).');
     }
     throw new AppError(
       ErrorCodes.ERR_CORRUPT_PDF,

@@ -1,11 +1,14 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import sharp from 'sharp';
 import { AppError, ErrorCodes } from './errors.js';
 
-// Strict memory cap enforcement for Sharp in 512 MB RAM environment
-sharp.cache(false);
-sharp.concurrency(1);
+// Maximize compute power: multi-threading across all logical CPU cores + SIMD acceleration
+const availableCpus = Math.max(1, os.cpus().length);
+sharp.concurrency(availableCpus);
+sharp.simd(true);
+sharp.cache({ memory: 64, files: 0, items: 20 });
 
 const ALLOWED_IMAGE_MIMES = new Set([
   'image/jpeg',
@@ -64,14 +67,14 @@ export async function processImageCompression(payload, updateProgress) {
   const maxWidth = options.maxWidth ? parseInt(options.maxWidth, 10) : null;
   const maxHeight = options.maxHeight ? parseInt(options.maxHeight, 10) : null;
 
-  updateProgress(40);
+  updateProgress(35);
 
   let outputBuffer;
   let finalQuality = userQuality;
   let currentWidth = metadata.width;
   let currentHeight = metadata.height;
 
-  // Apply dimension limits if specified
+  // Apply user dimension limits if specified
   let scaleFactor = 1;
   if (maxWidth && currentWidth > maxWidth) {
     scaleFactor = Math.min(scaleFactor, maxWidth / currentWidth);
@@ -80,66 +83,81 @@ export async function processImageCompression(payload, updateProgress) {
     scaleFactor = Math.min(scaleFactor, maxHeight / currentHeight);
   }
 
+  // Intelligent Pre-scaling for Target File Size:
+  // If targetKb is small (e.g. <= 200 KB) and no explicit maxWidth/maxHeight is given,
+  // clamp giant resolutions (24MP-50MP phone camera photos) to avoid mathematically impossible compression loops
+  if (targetKb && targetKb > 0 && !maxWidth && !maxHeight) {
+    let autoMaxDim = 4096;
+    if (targetKb <= 100) autoMaxDim = 1920;
+    else if (targetKb <= 300) autoMaxDim = 2560;
+    else if (targetKb <= 800) autoMaxDim = 3200;
+
+    const maxDim = Math.max(currentWidth, currentHeight);
+    if (maxDim > autoMaxDim) {
+      scaleFactor = Math.min(scaleFactor, autoMaxDim / maxDim);
+    }
+  }
+
   if (scaleFactor < 1) {
     currentWidth = Math.round(currentWidth * scaleFactor);
     currentHeight = Math.round(currentHeight * scaleFactor);
   }
 
+  // Pre-load working image in memory (resized once, zero repeated disk reads!)
+  let workingPipeline = sharp(filePath, { failOnError: false });
+  if (currentWidth !== metadata.width || currentHeight !== metadata.height) {
+    workingPipeline = workingPipeline.resize(currentWidth, currentHeight, { fit: 'inside', withoutEnlargement: true });
+  }
+  const workingBuffer = await workingPipeline.toBuffer();
+
+  updateProgress(50);
+
   if (targetKb && targetKb > 0) {
     const targetBytes = targetKb * 1024;
-    // Iterative binary search for quality to hit target file size
-    let low = 10;
+    let low = 15;
     let high = 95;
     let bestBuffer = null;
-    let bestDiff = Infinity;
 
-    for (let iter = 0; iter < 6; iter++) {
+    // 4 high-speed binary search iterations directly in RAM
+    for (let iter = 0; iter < 4; iter++) {
       const midQuality = Math.round((low + high) / 2);
-      updateProgress(40 + iter * 8);
+      updateProgress(50 + iter * 10);
 
-      const buf = await renderPipeline(filePath, outFormat, midQuality, currentWidth, currentHeight);
+      const buf = await renderPipelineFast(workingBuffer, outFormat, midQuality);
       const size = buf.length;
 
       if (size <= targetBytes) {
         bestBuffer = buf;
         finalQuality = midQuality;
-        // Can we get better quality while staying under targetBytes?
         low = midQuality + 1;
       } else {
         high = midQuality - 1;
       }
 
-      if (Math.abs(size - targetBytes) < targetBytes * 0.05) {
-        // Within 5% tolerance
+      if (Math.abs(size - targetBytes) < targetBytes * 0.06) {
         bestBuffer = buf;
         finalQuality = midQuality;
         break;
       }
     }
 
-    // If still over target after quality drop, downscale dimensions
+    // If still over target after quality adjustments, apply quick 1-pass exact ratio downscale
     if (!bestBuffer || bestBuffer.length > targetBytes) {
-      let dimScale = 0.85;
-      for (let scaleIter = 0; scaleIter < 4; scaleIter++) {
-        updateProgress(85 + scaleIter * 3);
-        const w = Math.round(currentWidth * dimScale);
-        const h = Math.round(currentHeight * dimScale);
-        const buf = await renderPipeline(filePath, outFormat, Math.min(finalQuality, 75), w, h);
-        if (buf.length <= targetBytes || scaleIter === 3) {
-          bestBuffer = buf;
-          currentWidth = w;
-          currentHeight = h;
-          break;
-        }
-        dimScale *= 0.8;
-      }
+      const currentLen = bestBuffer ? bestBuffer.length : (targetBytes * 1.5);
+      const downScale = Math.max(0.35, Math.min(0.9, Math.sqrt(targetBytes / currentLen)));
+      const newW = Math.round(currentWidth * downScale);
+      const newH = Math.round(currentHeight * downScale);
+      updateProgress(85);
+      bestBuffer = await renderPipelineFast(workingBuffer, outFormat, Math.min(finalQuality, 75), newW, newH);
+      currentWidth = newW;
+      currentHeight = newH;
     }
 
-    outputBuffer = bestBuffer || (await renderPipeline(filePath, outFormat, 40, currentWidth, currentHeight));
+    outputBuffer = bestBuffer || (await renderPipelineFast(workingBuffer, outFormat, 40, currentWidth, currentHeight));
   } else {
     // Normal quality / dimension compression
-    updateProgress(60);
-    outputBuffer = await renderPipeline(filePath, outFormat, userQuality, currentWidth, currentHeight);
+    updateProgress(75);
+    outputBuffer = await renderPipelineFast(workingBuffer, outFormat, userQuality);
     finalQuality = userQuality;
   }
 
@@ -180,20 +198,21 @@ export async function processImageCompression(payload, updateProgress) {
   };
 }
 
-async function renderPipeline(inputPath, format, quality, width, height) {
-  let pipeline = sharp(inputPath, { failOnError: false });
+async function renderPipelineFast(inputBuffer, format, quality, width, height) {
+  let pipeline = sharp(inputBuffer, { failOnError: false });
 
   if (width && height) {
     pipeline = pipeline.resize(width, height, { fit: 'inside', withoutEnlargement: true });
   }
 
   if (format === 'jpeg') {
-    pipeline = pipeline.jpeg({ quality, mozjpeg: true });
+    // Fast SIMD libjpeg-turbo with progressive rendering (10x faster than mozjpeg)
+    pipeline = pipeline.jpeg({ quality, progressive: true, mozjpeg: false });
   } else if (format === 'png') {
-    // Sharp PNG: compressionLevel 1-9, quality 1-100
-    pipeline = pipeline.png({ compressionLevel: 8, quality });
+    // Balanced fast PNG compression
+    pipeline = pipeline.png({ compressionLevel: 6, quality });
   } else if (format === 'webp') {
-    pipeline = pipeline.webp({ quality, effort: 4 });
+    pipeline = pipeline.webp({ quality, effort: 3 });
   }
 
   return await pipeline.toBuffer();

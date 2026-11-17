@@ -269,6 +269,11 @@ if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.arg
     console.log(`[file-utility-backend] Temp directory: ${config.tempDir}`);
   });
 
+  // Long timeouts for large file uploads and high-resolution conversions
+  server.keepAliveTimeout = 120000; // 2 minutes
+  server.headersTimeout = 125000;   // 2 minutes 5s
+  server.requestTimeout = 300000;   // 5 minutes
+
   const shutdown = () => {
     console.log('[file-utility-backend] Shutting down gracefully...');
     server.close(() => {

@@ -18,11 +18,11 @@ export function loadConfig() {
     maxConcurrentJobs: Math.max(1, parseInt(process.env.MAX_CONCURRENT_JOBS || '1', 10)),
     maxQueueSize: parseInt(process.env.MAX_QUEUE_SIZE || '50', 10),
     estimatedJobDurationSec: parseInt(process.env.ESTIMATED_JOB_DURATION_SEC || '8', 10),
-    maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '25', 10),
-    maxFileSizeBytes: parseInt(process.env.MAX_FILE_SIZE_MB || '25', 10) * 1024 * 1024,
+    maxFileSizeMb: parseInt(process.env.MAX_FILE_SIZE_MB || '50', 10),
+    maxFileSizeBytes: parseInt(process.env.MAX_FILE_SIZE_MB || '50', 10) * 1024 * 1024,
     tempDir,
     fileRetentionMs: parseInt(process.env.FILE_RETENTION_MS || '300000', 10), // 5 minutes
-    jobTimeoutMs: parseInt(process.env.JOB_TIMEOUT_MS || '90000', 10),       // 90 seconds max runtime
+    jobTimeoutMs: parseInt(process.env.JOB_TIMEOUT_MS || '180000', 10),       // 180 seconds max runtime
     sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '120000', 10), // 2 minutes
     supabaseUrl: process.env.SUPABASE_URL || null,
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || null,
