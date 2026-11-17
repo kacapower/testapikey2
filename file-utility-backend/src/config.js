@@ -24,5 +24,8 @@ export function loadConfig() {
     fileRetentionMs: parseInt(process.env.FILE_RETENTION_MS || '300000', 10), // 5 minutes
     jobTimeoutMs: parseInt(process.env.JOB_TIMEOUT_MS || '90000', 10),       // 90 seconds max runtime
     sweepIntervalMs: parseInt(process.env.SWEEP_INTERVAL_MS || '120000', 10), // 2 minutes
+    supabaseUrl: process.env.SUPABASE_URL || null,
+    supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || null,
+    supabaseBucket: process.env.SUPABASE_BUCKET || 'file-utility-temp',
   };
 }

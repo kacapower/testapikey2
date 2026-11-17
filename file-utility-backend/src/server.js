@@ -6,13 +6,24 @@ import fs from 'node:fs';
 import { loadConfig } from './config.js';
 import { AppError, ErrorCodes } from './errors.js';
 import { JobQueue } from './queue.js';
+import { SupabaseStorage } from './supabase.js';
 import { processImageCompression } from './compressor.js';
 import { processPdfConversion } from './pdf-converter.js';
 
 export function createServer(customConfig = null) {
   const config = customConfig || loadConfig();
   const app = express();
-  const queue = new JobQueue(config);
+
+  const supabaseStorage = new SupabaseStorage({
+    url: config.supabaseUrl,
+    serviceKey: config.supabaseServiceKey,
+    bucket: config.supabaseBucket,
+  });
+
+  const queue = new JobQueue({
+    ...config,
+    supabaseStorage,
+  });
 
   // Multer disk storage streaming directly to temp directory to avoid RAM spikes
   const storage = multer.diskStorage({
@@ -70,6 +81,7 @@ export function createServer(customConfig = null) {
     res.json({
       status: 'ok',
       service: 'render-file-utility',
+      supabaseConfigured: supabaseStorage.isConfigured(),
       queueLength: metrics.queuedJobs,
       activeJobs: metrics.activeJobs,
       concurrencyLimit: metrics.concurrencyLimit,
@@ -165,7 +177,7 @@ export function createServer(customConfig = null) {
   app.get('/api/jobs/:jobId/download', (req, res, next) => {
     try {
       const job = queue.getJob(req.params.jobId);
-      if (!job || job.status !== 'completed' || !job.resultPath) {
+      if (!job || job.status !== 'completed') {
         throw new AppError(
           ErrorCodes.ERR_JOB_NOT_FOUND,
           'Requested download file is not available, already purged, or does not exist.',
@@ -173,7 +185,12 @@ export function createServer(customConfig = null) {
         );
       }
 
-      if (!fs.existsSync(job.resultPath)) {
+      // If stored on Supabase Storage, redirect directly to Supabase signed URL
+      if (job.supabase?.signedUrl) {
+        return res.redirect(302, job.supabase.signedUrl);
+      }
+
+      if (!job.resultPath || !fs.existsSync(job.resultPath)) {
         throw new AppError(
           ErrorCodes.ERR_JOB_EXPIRED,
           'The file download window has expired and the file has been purged from memory/disk.',
@@ -239,7 +256,7 @@ export function createServer(customConfig = null) {
     });
   });
 
-  return { app, queue, config };
+  return { app, queue, supabaseStorage, config };
 }
 
 // Direct execution entrypoint

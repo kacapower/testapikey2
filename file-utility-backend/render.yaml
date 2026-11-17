@@ -24,3 +24,9 @@ services:
         value: "300000"
       - key: JOB_TIMEOUT_MS
         value: "90000"
+      - key: SUPABASE_URL
+        value: "https://ggxsinemrhhhxhviylig.supabase.co"
+      - key: SUPABASE_BUCKET
+        value: "file-utility-temp"
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -12,6 +12,7 @@ export class JobQueue {
     this.fileRetentionMs = config.fileRetentionMs || 300000; // 5 min
     this.jobTimeoutMs = config.jobTimeoutMs || 90000;
     this.tempDir = config.tempDir;
+    this.supabaseStorage = config.supabaseStorage || null;
 
     this.queue = [];             // FIFO array of jobIds waiting
     this.active = new Map();     // jobId -> Job
@@ -113,7 +114,8 @@ export class JobQueue {
         ...base,
         status: 'completed',
         progress: 100,
-        downloadUrl: `/api/jobs/${job.jobId}/download`,
+        downloadUrl: job.supabase?.signedUrl || `/api/jobs/${job.jobId}/download`,
+        storage: job.supabase ? 'supabase' : 'local',
         expiresInSeconds: Math.round(remainingMs / 1000),
         meta: job.meta || {},
       };
@@ -177,10 +179,45 @@ export class JobQueue {
       job.status = 'completed';
       job.progress = 100;
       job.completedAt = Date.now();
-      job.resultPath = result.outputPath;
       job.resultMime = result.mimeType;
       job.resultFilename = result.filename;
       job.meta = result.meta || {};
+
+      // Supabase Storage Pipeline:
+      // Render pushes processed file immediately to Supabase, then IMMEDIATELY deletes local file from disk/RAM
+      if (this.supabaseStorage && this.supabaseStorage.isConfigured() && result.outputPath) {
+        try {
+          const objectPath = `processed/${job.jobId}/${result.filename}`;
+          const uploadRes = await this.supabaseStorage.uploadFile(objectPath, result.outputPath, result.mimeType);
+
+          // Render immediately deletes the local processed file to protect 512 MB disk & RAM
+          await fs.unlink(result.outputPath).catch(() => {});
+          job.resultPath = null;
+
+          job.supabase = {
+            bucket: uploadRes.bucket,
+            objectPath: uploadRes.objectPath,
+            signedUrl: uploadRes.signedUrl,
+            publicUrl: uploadRes.publicUrl,
+            downloadUrl: uploadRes.signedUrl,
+            expiresAt: Date.now() + this.fileRetentionMs,
+          };
+
+          // Supabase scheduled deletion in 5 minutes
+          const supabasePurgeTimer = setTimeout(async () => {
+            try {
+              await this.supabaseStorage.deleteObject(objectPath);
+            } catch (_) {}
+          }, this.fileRetentionMs);
+          if (supabasePurgeTimer.unref) supabasePurgeTimer.unref();
+          this.timers.set(`${job.jobId}_supabase`, supabasePurgeTimer);
+        } catch (supabaseErr) {
+          console.warn(`[queue] Supabase push failed, keeping local file: ${supabaseErr.message}`);
+          job.resultPath = result.outputPath;
+        }
+      } else {
+        job.resultPath = result.outputPath;
+      }
 
       // Purge uploaded input temp file immediately after successful processing
       await this.cleanupJobSource(job);
@@ -188,7 +225,7 @@ export class JobQueue {
       // Move from active to completed
       this.moveToCompleted(job);
 
-      // Schedule 5-minute auto-purge timer
+      // Schedule 5-minute auto-purge timer for local file/job state
       const retentionTimer = setTimeout(() => {
         this.purgeJobFiles(job.jobId);
       }, this.fileRetentionMs);
@@ -242,6 +279,11 @@ export class JobQueue {
         await fs.unlink(job.resultPath);
       } catch (_) {}
       job.resultPath = null;
+    }
+
+    if (job.supabase?.objectPath && this.supabaseStorage) {
+      this.supabaseStorage.deleteObject(job.supabase.objectPath).catch(() => {});
+      job.supabase = null;
     }
 
     this.active.delete(jobId);
