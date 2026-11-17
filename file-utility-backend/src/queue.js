@@ -176,9 +176,7 @@ export class JobQueue {
       if (timedOut) return;
 
       clearTimeout(timeoutHandle);
-      job.status = 'completed';
-      job.progress = 100;
-      job.completedAt = Date.now();
+      job.progress = 95;
       job.resultMime = result.mimeType;
       job.resultFilename = result.filename;
       job.meta = result.meta || {};
@@ -222,6 +220,11 @@ export class JobQueue {
       } else {
         job.resultPath = result.outputPath;
       }
+
+      // Mark completed ONLY after Supabase upload finishes and local file is deleted!
+      job.status = 'completed';
+      job.progress = 100;
+      job.completedAt = Date.now();
 
       // Purge uploaded input temp file immediately after successful processing
       await this.cleanupJobSource(job);
