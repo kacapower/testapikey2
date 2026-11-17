@@ -1,0 +1,26 @@
+# Render Blueprint for Client-Fronted File Utility Backend
+services:
+  - type: web
+    name: file-utility-backend
+    runtime: docker
+    plan: free
+    region: oregon # or frankfurt, ohio, singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: MAX_CONCURRENT_JOBS
+        value: "1"
+      - key: MAX_QUEUE_SIZE
+        value: "50"
+      - key: MAX_FILE_SIZE_MB
+        value: "25"
+      - key: FILE_RETENTION_MS
+        value: "300000"
+      - key: JOB_TIMEOUT_MS
+        value: "90000"
