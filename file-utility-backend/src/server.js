@@ -82,6 +82,7 @@ export function createServer(customConfig = null) {
       status: 'ok',
       service: 'render-file-utility',
       supabaseConfigured: supabaseStorage.isConfigured(),
+      lastSupabaseError: queue.lastSupabaseError || null,
       queueLength: metrics.queuedJobs,
       activeJobs: metrics.activeJobs,
       concurrencyLimit: metrics.concurrencyLimit,

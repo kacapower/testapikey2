@@ -212,7 +212,11 @@ export class JobQueue {
           if (supabasePurgeTimer.unref) supabasePurgeTimer.unref();
           this.timers.set(`${job.jobId}_supabase`, supabasePurgeTimer);
         } catch (supabaseErr) {
-          console.warn(`[queue] Supabase push failed, keeping local file: ${supabaseErr.message}`);
+          console.error(`[queue] Supabase push failed, keeping local file: ${supabaseErr.message}`);
+          this.lastSupabaseError = {
+            message: supabaseErr.message,
+            time: new Date().toISOString(),
+          };
           job.resultPath = result.outputPath;
         }
       } else {
